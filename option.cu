@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <math_constants.h>
 #include <stdio.h>
 #include <vector>
 
@@ -37,10 +38,53 @@ using namespace std;
     }                                                   \
 } while(0)
 
+__host__ __device__ static __inline__
+cufftDoubleComplex cuComplexExponential(cufftDoubleComplex x)
+{
+    double a = cuCreal(x);
+    double b = cuCreal(x);
+    double ea = exp(a);
+    return make_cuDoubleComplex(ea * cos(b), ea * sin(b));
+}
+
 __global__
 void hello(char *a, int *b)
 {
     a[threadIdx.x] += b[threadIdx.x];
+}
+
+__global__
+void solveODE(cufftDoubleComplex* ft,
+              double from_time,         // τ_l (T - t_l)
+              double to_time,           // τ_u (T - t_u)
+              double riskFreeRate, double volatility,
+              double jumpMean, double kappa)
+{
+    int idx = threadIdx.x;
+
+    cufftDoubleComplex old_value = ft[idx];
+
+    // Frequency.
+    double k = 0.0;
+
+    // Calculate Ψ (psi) (2.14)
+    // Equation slightly simplified to save a few operations.
+    double fst_term = volatility * M_PI * k;
+    double psi_real = (-2.0 * fst_term * fst_term) - (riskFreeRate + jumpMean);
+    double psi_imag = (riskFreeRate - jumpMean * kappa - volatility * volatility / 2.0) *
+                      (2 * M_PI * k);
+
+    // TODO: jump component.
+
+    // Solution to ODE (2.27)
+    double delta_tau = to_time - from_time;
+    cufftDoubleComplex exponent =
+        make_cuDoubleComplex(psi_real * delta_tau, psi_imag * delta_tau);
+    cufftDoubleComplex exponential = cuComplexExponential(exponent);
+
+    cufftDoubleComplex new_value = cuCmul(old_value, exponential);
+
+    ft[idx] = new_value;
 }
 
 /*
@@ -142,6 +186,11 @@ int main()
 
     // Forward transform
     checkCufft(cufftExecD2Z(plan, d_prices, d_ft));
+
+    // Solve ODE
+    solveODE<<<dim3(N, 1), dim3(1, 1)>>>(d_ft, 0.0, params.expiryTime,
+            params.riskFreeRate,
+            params.volatility, params.jumpMean, params.kappa);
 
     // Reverse transform
     checkCufft(cufftExecZ2D(plan, d_ft, d_prices));

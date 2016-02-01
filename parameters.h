@@ -41,6 +41,9 @@ struct Parameters
     // Symbol: delta t
     double timeIncrement;
 
+    // Symbol: κ (kappa)
+    double kappa;
+
     OptionType optionType;
 
     Parameters();
