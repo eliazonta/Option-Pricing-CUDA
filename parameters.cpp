@@ -10,5 +10,8 @@ Parameters::Parameters()
 , jumpMean(0.1)
 , driftRate(-1.08)
 , gamma(0.4)
+, resolution(100)
+, optionType(Put)
 {
+    timeIncrement = expiryTime / resolution;
 }

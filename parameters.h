@@ -1,3 +1,9 @@
+enum OptionType
+{
+    Call,
+    Put,
+};
+
 struct Parameters
 {
     // Symbol: S
@@ -28,6 +34,14 @@ struct Parameters
     // Symbol: γ (gamma)
     // TODO: What is this?
     double gamma;
+
+    // Symbol: N
+    int resolution;
+
+    // Symbol: delta t
+    double timeIncrement;
+
+    OptionType optionType;
 
     Parameters();
 };
