@@ -64,14 +64,16 @@ void solveODE(cufftComplex* ft,
               float from_time,         // τ_l (T - t_l)
               float to_time,           // τ_u (T - t_u)
               float riskFreeRate, float volatility,
-              float jumpMean, float kappa)
+              float jumpMean, float kappa,
+              int N, float delta_frequency)
 {
     int idx = threadIdx.x;
 
     cufftComplex old_value = ft[idx];
 
-    // Frequency.
-    float k = 0.0;
+    // Frequency (see p.11 for discretization).
+    float m = idx - N / 2 + 1;
+    float k = delta_frequency * m;
 
     // Calculate Ψ (psi) (2.14)
     // Equation slightly simplified to save a few operations.
@@ -102,7 +104,7 @@ computeGPU()
 
 */
 
-vector<float> pricesAtPayoff(Parameters& prms)
+vector<float> assetPricesAtPayoff(Parameters& prms)
 {
     vector<float> out(prms.resolution);
 
@@ -114,11 +116,22 @@ vector<float> pricesAtPayoff(Parameters& prms)
 
     float N = prms.resolution;
     for (int i = 0; i < N; i++) {
-        float asset = prms.startPrice * pow(u, i) * pow(d, N - i);
+        out[i] = prms.startPrice * pow(u, i) * pow(d, N - i);
+    }
+
+    return out;
+}
+
+vector<float> optionValuesAtPayoff(Parameters& prms, vector<float>& assetPrices)
+{
+    vector<float> out(prms.resolution);
+
+    float N = prms.resolution;
+    for (int i = 0; i < N; i++) {
         if (prms.optionType == Call) {
-            out[i] = max(asset - prms.strikePrice, 0.0);
+            out[i] = max(assetPrices[i] - prms.strikePrice, 0.0);
         } else {
-            out[i] = max(prms.strikePrice - asset, 0.0);
+            out[i] = max(prms.strikePrice - assetPrices[i], 0.0);
         }
     }
 
@@ -228,15 +241,16 @@ int main()
     printf("\nChecks finished. Starting option calculation...\n\n");
 
     Parameters params;
-    vector<float> prices = pricesAtPayoff(params);
+    vector<float> assetPrices = assetPricesAtPayoff(params);
+    vector<float> optionValues = optionValuesAtPayoff(params, assetPrices);
 
-    printPrices(prices);
+    printPrices(optionValues);
 
     float N = params.resolution;
 
     cufftReal* d_prices;
     checkCuda(cudaMalloc((void**)&d_prices, sizeof(cufftReal) * N));
-    checkCuda(cudaMemcpy(d_prices, &prices[0], sizeof(cufftReal) * N,
+    checkCuda(cudaMemcpy(d_prices, &optionValues[0], sizeof(cufftReal) * N,
                          cudaMemcpyHostToDevice));
 
     cufftComplex* d_ft;
@@ -252,18 +266,23 @@ int main()
     // Forward transform
     checkCufft(cufftExecR2C(plan, d_prices, d_ft));
 
+    // Discretization parameters (see p.11)
+    float X = log(assetPrices[assetPrices.size() - 1]) - log(assetPrices[0]);
+    float delta_frequency = (float)(N - 1) / X / N;
+
     // Solve ODE
     solveODE<<<dim3(1, 1), dim3(N, 1)>>>(d_ft, 0.0, params.expiryTime,
             params.riskFreeRate,
-            params.volatility, params.jumpMean, params.kappa);
+            params.volatility, params.jumpMean, params.kappa,
+            N, delta_frequency);
 
     // Reverse transform
     checkCufft(cufftExecC2R(planr, d_ft, d_prices));
     normalize<<<dim3(1, 1), dim3(N, 1)>>>(d_prices, N);
 
-    checkCuda(cudaMemcpy(&prices[0], d_prices, sizeof(cufftReal) * N,
+    checkCuda(cudaMemcpy(&optionValues[0], d_prices, sizeof(cufftReal) * N,
                          cudaMemcpyDeviceToHost));
-    printPrices(prices);
+    printPrices(optionValues);
 
     // Destroy the cuFFT plan.
     cufftDestroy(plan);
