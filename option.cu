@@ -39,12 +39,12 @@ using namespace std;
 } while(0)
 
 __host__ __device__ static __inline__
-cufftDoubleComplex cuComplexExponential(cufftDoubleComplex x)
+cufftComplex cuComplexExponential(cufftComplex x)
 {
-    double a = cuCreal(x);
-    double b = cuCreal(x);
-    double ea = exp(a);
-    return make_cuDoubleComplex(ea * cos(b), ea * sin(b));
+    float a = cuCrealf(x);
+    float b = cuCrealf(x);
+    float ea = exp(a);
+    return make_cuComplex(ea * cos(b), ea * sin(b));
 }
 
 __global__
@@ -54,35 +54,35 @@ void hello(char *a, int *b)
 }
 
 __global__
-void solveODE(cufftDoubleComplex* ft,
-              double from_time,         // τ_l (T - t_l)
-              double to_time,           // τ_u (T - t_u)
-              double riskFreeRate, double volatility,
-              double jumpMean, double kappa)
+void solveODE(cufftComplex* ft,
+              float from_time,         // τ_l (T - t_l)
+              float to_time,           // τ_u (T - t_u)
+              float riskFreeRate, float volatility,
+              float jumpMean, float kappa)
 {
     int idx = threadIdx.x;
 
-    cufftDoubleComplex old_value = ft[idx];
+    cufftComplex old_value = ft[idx];
 
     // Frequency.
-    double k = 0.0;
+    float k = 0.0;
 
     // Calculate Ψ (psi) (2.14)
     // Equation slightly simplified to save a few operations.
-    double fst_term = volatility * M_PI * k;
-    double psi_real = (-2.0 * fst_term * fst_term) - (riskFreeRate + jumpMean);
-    double psi_imag = (riskFreeRate - jumpMean * kappa - volatility * volatility / 2.0) *
+    float fst_term = volatility * M_PI * k;
+    float psi_real = (-2.0 * fst_term * fst_term) - (riskFreeRate + jumpMean);
+    float psi_imag = (riskFreeRate - jumpMean * kappa - volatility * volatility / 2.0) *
                       (2 * M_PI * k);
 
     // TODO: jump component.
 
     // Solution to ODE (2.27)
-    double delta_tau = to_time - from_time;
-    cufftDoubleComplex exponent =
-        make_cuDoubleComplex(psi_real * delta_tau, psi_imag * delta_tau);
-    cufftDoubleComplex exponential = cuComplexExponential(exponent);
+    float delta_tau = to_time - from_time;
+    cufftComplex exponent =
+        make_cuComplex(psi_real * delta_tau, psi_imag * delta_tau);
+    cufftComplex exponential = cuComplexExponential(exponent);
 
-    cufftDoubleComplex new_value = cuCmul(old_value, exponential);
+    cufftComplex new_value = cuCmulf(old_value, exponential);
 
     ft[idx] = new_value;
 }
@@ -96,19 +96,19 @@ computeGPU()
 
 */
 
-vector<double> pricesAtPayoff(Parameters& prms)
+vector<float> pricesAtPayoff(Parameters& prms)
 {
-    vector<double> out(prms.resolution);
+    vector<float> out(prms.resolution);
 
     // Tree parameters (see p.53 of notes).
-    double u = exp(prms.volatility * sqrt(prms.timeIncrement));
-    double d = 1.0 / u;
-    double a = exp(prms.riskFreeRate * prms.timeIncrement);
-    // double p = (a - d) / (u - d);
+    float u = exp(prms.volatility * sqrt(prms.timeIncrement));
+    float d = 1.0 / u;
+    float a = exp(prms.riskFreeRate * prms.timeIncrement);
+    // float p = (a - d) / (u - d);
 
-    double N = prms.resolution;
+    float N = prms.resolution;
     for (int i = 0; i < N; i++) {
-        double asset = prms.startPrice * pow(u, i) * pow(d, N - i);
+        float asset = prms.startPrice * pow(u, i) * pow(d, N - i);
         if (prms.optionType == Call) {
             out[i] = max(asset - prms.strikePrice, 0.0);
         } else {
@@ -117,6 +117,50 @@ vector<double> pricesAtPayoff(Parameters& prms)
     }
 
     return out;
+}
+
+// Print device properties
+void printDevProp(cudaDeviceProp devProp)
+{
+    printf("Major revision number:         %d\n",  devProp.major);
+    printf("Minor revision number:         %d\n",  devProp.minor);
+    printf("Name:                          %s\n",  devProp.name);
+    printf("Total global memory:           %zu\n", devProp.totalGlobalMem);
+    printf("Total shared memory per block: %zu\n", devProp.sharedMemPerBlock);
+    printf("Total registers per block:     %d\n",  devProp.regsPerBlock);
+    printf("Warp size:                     %d\n",  devProp.warpSize);
+    printf("Maximum memory pitch:          %zu\n", devProp.memPitch);
+    printf("Maximum threads per block:     %d\n",  devProp.maxThreadsPerBlock);
+    for (int i = 0; i < 3; ++i)
+    printf("Maximum dimension %d of block:  %d\n", i, devProp.maxThreadsDim[i]);
+    for (int i = 0; i < 3; ++i)
+    printf("Maximum dimension %d of grid:   %d\n", i, devProp.maxGridSize[i]);
+    printf("Clock rate:                    %d\n",  devProp.clockRate);
+    printf("Total constant memory:         %zu\n", devProp.totalConstMem);
+    printf("Texture alignment:             %zu\n", devProp.textureAlignment);
+    printf("Concurrent copy and execution: %s\n",  (devProp.deviceOverlap ? "Yes" : "No"));
+    printf("Number of multiprocessors:     %d\n",  devProp.multiProcessorCount);
+    printf("Kernel execution timeout:      %s\n",  (devProp.kernelExecTimeoutEnabled ? "Yes" : "No"));
+    return;
+}
+
+void printAllDevices()
+{
+    // Number of CUDA devices
+    int devCount;
+    cudaGetDeviceCount(&devCount);
+    printf("CUDA Device Query...\n");
+    printf("There are %d CUDA devices.\n", devCount);
+
+    // Iterate through devices
+    for (int i = 0; i < devCount; ++i)
+    {
+        // Get device properties
+        printf("\nCUDA Device #%d\n", i);
+        cudaDeviceProp devProp;
+        cudaGetDeviceProperties(&devProp, i);
+        printDevProp(devProp);
+    }
 }
 
 // Prints Hello, World if the GPU code is working right.
@@ -135,22 +179,33 @@ void helloWorld()
 
     printf("%s", a);
 
-    cudaMalloc( (void**)&ad, csize );
-    cudaMalloc( (void**)&bd, isize );
-    cudaMemcpy( ad, a, csize, cudaMemcpyHostToDevice );
-    cudaMemcpy( bd, b, isize, cudaMemcpyHostToDevice );
+    checkCuda(cudaMalloc( (void**)&ad, csize ));
+    checkCuda(cudaMalloc( (void**)&bd, isize ));
+    checkCuda(cudaMemcpy( ad, a, csize, cudaMemcpyHostToDevice ));
+    checkCuda(cudaMemcpy( bd, b, isize, cudaMemcpyHostToDevice ));
 
     dim3 dimBlock( blocksize, 1 );
     dim3 dimGrid( 1, 1 );
     hello<<<dimGrid, dimBlock>>>(ad, bd);
-    cudaMemcpy( a, ad, csize, cudaMemcpyDeviceToHost );
-    cudaFree( ad );
-    cudaFree( bd );
+    checkCuda(cudaMemcpy( a, ad, csize, cudaMemcpyDeviceToHost ));
+    checkCuda(cudaFree( ad ));
+    checkCuda(cudaFree( bd ));
 
     printf("%s\n", a);
 }
 
-void printPrices(vector<double>& prices) {
+// Run a couple tests to see that CUDA works properly.
+void cudaCheck()
+{
+    printf("Calling cudaFree(0) no-op...\n");
+    cudaFree(0);
+    printf("Calling cudaFree(0) succeeded!\n");
+
+    printAllDevices();
+    helloWorld();
+}
+
+void printPrices(vector<float>& prices) {
     for (int i = 0; i < prices.size(); i++) {
         printf("%f ", prices[i]);
     }
@@ -159,33 +214,37 @@ void printPrices(vector<double>& prices) {
 
 int main()
 {
-    assert(sizeof(cufftDoubleReal) == sizeof(double));
-    assert(sizeof(cufftDoubleComplex) == 2 * sizeof(double));
+    assert(sizeof(cufftReal) == sizeof(float));
+    assert(sizeof(cufftComplex) == 2 * sizeof(float));
 
-    helloWorld();
+    cudaCheck();
+
+    printf("\nChecks finished. Starting option calculation...\n\n");
 
     Parameters params;
-    vector<double> prices = pricesAtPayoff(params);
+    vector<float> prices = pricesAtPayoff(params);
 
     printPrices(prices);
 
-    double N = params.resolution;
+    float N = params.resolution;
 
-    cufftDoubleReal* d_prices;
-    checkCuda(cudaMalloc((void**)&d_prices, sizeof(cufftDoubleReal) * N));
-    checkCuda(cudaMemcpy(d_prices, &prices[0], sizeof(cufftDoubleReal) * N,
+    cufftReal* d_prices;
+    checkCuda(cudaMalloc((void**)&d_prices, sizeof(cufftReal) * N));
+    checkCuda(cudaMemcpy(d_prices, &prices[0], sizeof(cufftReal) * N,
                          cudaMemcpyHostToDevice));
 
-    cufftDoubleComplex* d_ft;
-    checkCuda(cudaMalloc((void**)&d_ft, sizeof(cufftDoubleComplex) * N));
+    cufftComplex* d_ft;
+    checkCuda(cudaMalloc((void**)&d_ft, sizeof(cufftComplex) * N));
 
     cufftHandle plan;
-    // Double to double-complex interleaved
-    checkCufft(cufftPlan1d(&plan, N, CUFFT_D2Z, /* deprecated? */ 1));
-    //checkCufft(cufftPlan3d(&plan, 5, 5, 5, CUFFT_C2C /* deprecated? */));
+    cufftHandle planr;
+
+    // Float to complex interleaved
+    checkCufft(cufftPlan1d(&plan, N, CUFFT_R2C, /* deprecated? */ 1));
+    checkCufft(cufftPlan1d(&planr, N, CUFFT_C2R, /* deprecated? */ 1));
 
     // Forward transform
-    checkCufft(cufftExecD2Z(plan, d_prices, d_ft));
+    checkCufft(cufftExecR2C(plan, d_prices, d_ft));
 
     // Solve ODE
     solveODE<<<dim3(N, 1), dim3(1, 1)>>>(d_ft, 0.0, params.expiryTime,
@@ -193,9 +252,9 @@ int main()
             params.volatility, params.jumpMean, params.kappa);
 
     // Reverse transform
-    checkCufft(cufftExecZ2D(plan, d_ft, d_prices));
+    checkCufft(cufftExecC2R(planr, d_ft, d_prices));
 
-    checkCuda(cudaMemcpy(d_prices, &prices[0], sizeof(cufftDoubleReal) * N,
+    checkCuda(cudaMemcpy(d_prices, &prices[0], sizeof(cufftReal) * N,
                          cudaMemcpyDeviceToHost));
     printPrices(prices);
 
