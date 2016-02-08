@@ -54,6 +54,12 @@ void hello(char *a, int *b)
 }
 
 __global__
+void normalize(cufftReal* ft, int length)
+{
+    ft[threadIdx.x] /= length;
+}
+
+__global__
 void solveODE(cufftComplex* ft,
               float from_time,         // τ_l (T - t_l)
               float to_time,           // τ_u (T - t_u)
@@ -247,14 +253,15 @@ int main()
     checkCufft(cufftExecR2C(plan, d_prices, d_ft));
 
     // Solve ODE
-    solveODE<<<dim3(N, 1), dim3(1, 1)>>>(d_ft, 0.0, params.expiryTime,
+    solveODE<<<dim3(1, 1), dim3(N, 1)>>>(d_ft, 0.0, params.expiryTime,
             params.riskFreeRate,
             params.volatility, params.jumpMean, params.kappa);
 
     // Reverse transform
     checkCufft(cufftExecC2R(planr, d_ft, d_prices));
+    normalize<<<dim3(1, 1), dim3(N, 1)>>>(d_prices, N);
 
-    checkCuda(cudaMemcpy(d_prices, &prices[0], sizeof(cufftReal) * N,
+    checkCuda(cudaMemcpy(&prices[0], d_prices, sizeof(cufftReal) * N,
                          cudaMemcpyDeviceToHost));
     printPrices(prices);
 
