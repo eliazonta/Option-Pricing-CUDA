@@ -11,12 +11,12 @@ Parameters::Parameters()
 , volatility(0.15)
 , jumpMean(0.1)
 , driftRate(-1.08)
-, gamma(0.4)
+, normalStdev(0.4)
 , resolution(100)
 , optionType(Put)
 {
     timeIncrement = expiryTime / resolution;
 
     // Calculation of kappa, see p.13 of paper
-    kappa = exp(driftRate + gamma * gamma / 2.0) - 1.0;
+    kappa = exp(driftRate + normalStdev * normalStdev / 2.0) - 1.0;
 }

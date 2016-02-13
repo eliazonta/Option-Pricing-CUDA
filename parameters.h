@@ -32,8 +32,10 @@ struct Parameters
     double driftRate;
 
     // Symbol: γ (gamma)
-    // TODO: What is this?
-    double gamma;
+    // Normally, this is σ (standard deviation) in the normal,
+    // but here we already use σ for the volatility so we need
+    // another variable name.
+    double normalStdev;
 
     // Symbol: N
     int resolution;
