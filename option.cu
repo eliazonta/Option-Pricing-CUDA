@@ -95,15 +95,6 @@ void solveODE(cufftComplex* ft,
     ft[idx] = new_value;
 }
 
-/*
-
-computeGPU()
-{
-
-}
-
-*/
-
 vector<float> assetPricesAtPayoff(Parameters& prms)
 {
     vector<float> out(prms.resolution);
@@ -231,20 +222,14 @@ void printPrices(vector<float>& prices) {
     printf("\n");
 }
 
-int main()
+void computeCPU()
 {
-    assert(sizeof(cufftReal) == sizeof(float));
-    assert(sizeof(cufftComplex) == 2 * sizeof(float));
+}
 
-    cudaCheck();
-
-    printf("\nChecks finished. Starting option calculation...\n\n");
-
-    Parameters params;
-    vector<float> assetPrices = assetPricesAtPayoff(params);
-    vector<float> optionValues = optionValuesAtPayoff(params, assetPrices);
-
-    printPrices(optionValues);
+void computeGPU(Parameters& params, vector<float>& assetPrices, vector<float>& optionValues)
+{
+    // Option values at time t = 0
+    vector<float> initialValues(optionValues.size());
 
     float N = params.resolution;
 
@@ -280,14 +265,33 @@ int main()
     checkCufft(cufftExecC2R(planr, d_ft, d_prices));
     normalize<<<dim3(1, 1), dim3(N, 1)>>>(d_prices, N);
 
-    checkCuda(cudaMemcpy(&optionValues[0], d_prices, sizeof(cufftReal) * N,
+    checkCuda(cudaMemcpy(&initialValues[0], d_prices, sizeof(cufftReal) * N,
                          cudaMemcpyDeviceToHost));
-    printPrices(optionValues);
 
     // Destroy the cuFFT plan.
     cufftDestroy(plan);
     cudaFree(d_prices);
     cudaFree(d_ft);
+
+    printPrices(initialValues);
+}
+
+int main()
+{
+    assert(sizeof(cufftReal) == sizeof(float));
+    assert(sizeof(cufftComplex) == 2 * sizeof(float));
+
+    cudaCheck();
+
+    printf("\nChecks finished. Starting option calculation...\n\n");
+
+    Parameters params;
+    vector<float> assetPrices = assetPricesAtPayoff(params);
+    vector<float> optionValues = optionValuesAtPayoff(params, assetPrices);
+
+    printPrices(optionValues);
+
+    computeGPU(params, assetPrices, optionValues);
 
     return EXIT_SUCCESS;
 }
