@@ -142,7 +142,7 @@ vector<float> optionValuesAtPayoff(Parameters& prms, vector<float>& assetPrices)
 
     float N = prms.resolution;
     for (int i = 0; i < N; i++) {
-        if (prms.optionType == Call) {
+        if (prms.optionPayoffType == Call) {
             out[i] = max(assetPrices[i] - prms.strikePrice, 0.0);
         } else {
             out[i] = max(prms.strikePrice - assetPrices[i], 0.0);

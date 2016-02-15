@@ -15,7 +15,8 @@ Parameters::Parameters()
 , normalStdev(0.4)
 , logBoundary(7.5)
 , resolution(512)
-, optionType(Put)
+, optionPayoffType(Put)
+, optionExerciseType(European)
 {
     timeIncrement = expiryTime / resolution;
 

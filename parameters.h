@@ -1,7 +1,13 @@
-enum OptionType
+enum OptionPayoffType
 {
     Call,
     Put,
+};
+
+enum OptionExerciseType
+{
+    European,
+    American,
 };
 
 struct Parameters
@@ -49,7 +55,11 @@ struct Parameters
     // Symbol: κ (kappa)
     double kappa;
 
-    OptionType optionType;
+    // Put or Call
+    OptionPayoffType optionPayoffType;
+
+    // European or American
+    OptionExerciseType optionExerciseType;
 
     Parameters();
 };
