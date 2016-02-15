@@ -37,6 +37,9 @@ struct Parameters
     // another variable name.
     double normalStdev;
 
+    // Symbol: x_min and x_max
+    double logBoundary;
+
     // Symbol: N
     int resolution;
 
