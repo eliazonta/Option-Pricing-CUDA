@@ -252,8 +252,14 @@ void printAllDevices()
     printf("CUDA Device Query...\n");
     printf("There are %d CUDA devices.\n", devCount);
 
+    // For some reason, systems that don't have CUDA devices might
+    // print infinitely many of them. If we run the program accidently,
+    // the program might hang while printing. We don't want that.
+    if (devCount > 5)
+        printf("Printing first 5 devices.\n");
+
     // Iterate through devices
-    for (int i = 0; i < devCount; ++i)
+    for (int i = 0; i < min(5, devCount); ++i)
     {
         // Get device properties
         printf("\nCUDA Device #%d\n", i);
