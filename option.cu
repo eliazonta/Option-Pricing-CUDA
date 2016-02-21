@@ -71,6 +71,21 @@ void normalize(cufftReal* ft, int length)
 }
 
 __global__
+// TODO: Need better argument names for the last two...
+void earlyExercise(cufftReal* ft, float startPrice, float strikePrice,
+                   float x_min, float delta_x,
+                   OptionPayoffType type)
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    float assetPrice = startPrice * exp(x_min + idx * delta_x);
+    if (type == Call) {
+        ft[idx] = max(ft[idx], max(assetPrice - strikePrice, 0.0));
+    } else {
+        ft[idx] = max(ft[idx], max(strikePrice - assetPrice, 0.0));
+    }
+}
+
+__global__
 void solveODE(cufftComplex* ft,
               float from_time,         // τ_l (T - t_l)
               float to_time,           // τ_u (T - t_u)
@@ -116,6 +131,8 @@ vector<float> assetPricesAtPayoff(Parameters& prms)
     float N = prms.resolution;
     vector<float> out(N);
 
+    // Discretization parameters (see p.11)
+    // TODO: Factor out into params?
     float x_max = prms.logBoundary;
     float x_min = -prms.logBoundary;
     float delta_x = (x_max - x_min) / (N - 1);
@@ -315,10 +332,15 @@ void cudaCheck()
 }
 
 void printPrices(vector<float>& prices) {
+    int first_negative = -1;
     for (int i = 0; i < prices.size(); i++) {
         printf("%f ", prices[i]);
+        if (first_negative == -1 && prices[i] < 0) {
+            first_negative = i;
+        }
     }
     printf("\n");
+    printf("First negative number at %d.\n", first_negative);
 }
 
 void computeCPU(Parameters& params, vector<float>& assetPrices, vector<float>& optionValues)
@@ -394,7 +416,7 @@ void computeGPU(Parameters& params, vector<float>& assetPrices, vector<float>& o
     // Option values at time t = 0
     vector<float> initialValues(optionValues.size());
 
-    float N = params.resolution;
+    int N = params.resolution;
 
     cufftReal* d_prices;
     checkCuda(cudaMalloc((void**)&d_prices, sizeof(cufftReal) * N));
@@ -414,6 +436,7 @@ void computeGPU(Parameters& params, vector<float>& assetPrices, vector<float>& o
     // Discretization parameters (see p.11)
     float x_max = params.logBoundary;
     float x_min = -params.logBoundary;
+    float delta_x = (x_max - x_min) / (N - 1);
     float delta_frequency = (float)(N - 1) / (x_max - x_min) / N;
 
     for (int i = 0; i < params.timesteps; i++) {
@@ -432,14 +455,23 @@ void computeGPU(Parameters& params, vector<float>& assetPrices, vector<float>& o
         // of the array either to compute the inverse fourier transform.
         // See http://www.fftw.org/doc/The-1d-Real_002ddata-DFT.html
         int ode_size = N / 2;
-        solveODE<<<dim3(ode_size / 512, 1), dim3(min(ode_size, 512), 1)>>>(
+        solveODE<<<dim3(max(ode_size / 512, 1), 1), dim3(min(ode_size, 512), 1)>>>(
                 d_ft, from_time, to_time, params.riskFreeRate,
                 params.volatility, params.jumpMean, params.kappa,
                 N, delta_frequency);
 
         // Reverse transform
         checkCufft(cufftExecC2R(planr, d_ft, d_prices));
-        normalize<<<dim3(N / 512, 1), dim3(min((int)N, 512), 1)>>>(d_prices, N);
+        normalize<<<dim3(max(N / 512, 1), 1), dim3(min((int)N, 512), 1)>>>(d_prices, N);
+
+        // Consider early exercise for American options. This is the same technique
+        // as option pricing using dynamic programming: at each timestep, set the
+        // option value to the payoff if is higher than the current option value.
+        if (params.optionExerciseType == American) {
+            earlyExercise<<<dim3(max(N / 512, 1), 1), dim3(min((int)N, 512), 1)>>>(
+                    d_prices, params.startPrice, params.strikePrice,
+                    x_min, delta_x, params.optionPayoffType);
+        }
     }
 
     checkCuda(cudaMemcpy(&initialValues[0], d_prices, sizeof(cufftReal) * N,
@@ -519,8 +551,6 @@ int main(int argc, char** argv)
 
     vector<float> assetPrices = assetPricesAtPayoff(params);
     vector<float> optionValues = optionValuesAtPayoff(params, assetPrices);
-
-    printPrices(optionValues);
 
     printf("\nComputing CPU results...\n");
     //computeCPU(params, assetPrices, optionValues);
