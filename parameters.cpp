@@ -1,5 +1,6 @@
 #include "parameters.h"
 
+#include <assert.h>
 #include <cmath>
 
 Parameters::Parameters()
@@ -14,10 +15,12 @@ Parameters::Parameters()
 , driftRate(-1.08)
 , normalStdev(0.4)
 , logBoundary(7.5)
-, resolution(512)
+, resolution(2048)
 , optionPayoffType(Put)
 , optionExerciseType(European)
 {
+    assert(resolution % 512 == 0);
+
     timeIncrement = expiryTime / resolution;
 
     // Calculation of kappa, see p.13 of paper

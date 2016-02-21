@@ -58,13 +58,15 @@ cufftComplex cuComplexScalarMult(float scalar, cufftComplex x)
 __global__
 void hello(char *a, int *b)
 {
-    a[threadIdx.x] += b[threadIdx.x];
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    a[idx] += b[idx];
 }
 
 __global__
 void normalize(cufftReal* ft, int length)
 {
-    ft[threadIdx.x] /= length;
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    ft[idx] /= length;
 }
 
 __global__
@@ -75,7 +77,7 @@ void solveODE(cufftComplex* ft,
               float jumpMean, float kappa,
               int N, float delta_frequency)
 {
-    int idx = threadIdx.x;
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
     cufftComplex old_value = ft[idx];
 
@@ -424,14 +426,15 @@ void computeGPU(Parameters& params, vector<float>& assetPrices, vector<float>& o
     // any values in the second half at all! They don't use the second half
     // of the array either to compute the inverse fourier transform.
     // See http://www.fftw.org/doc/The-1d-Real_002ddata-DFT.html
-    solveODE<<<dim3(1, 1), dim3(N / 2, 1)>>>(d_ft, 0.0, params.expiryTime,
-            params.riskFreeRate,
+    int ode_size = N / 2;
+    solveODE<<<dim3(ode_size / 512, 1), dim3(min(ode_size, 512), 1)>>>(
+            d_ft, 0.0, params.expiryTime, params.riskFreeRate,
             params.volatility, params.jumpMean, params.kappa,
             N, delta_frequency);
 
     // Reverse transform
     checkCufft(cufftExecC2R(planr, d_ft, d_prices));
-    normalize<<<dim3(1, 1), dim3(N, 1)>>>(d_prices, N);
+    normalize<<<dim3(N / 512, 1), dim3(min((int)N, 512), 1)>>>(d_prices, N);
 
     checkCuda(cudaMemcpy(&initialValues[0], d_prices, sizeof(cufftReal) * N,
                          cudaMemcpyDeviceToHost));
