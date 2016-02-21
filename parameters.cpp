@@ -3,10 +3,7 @@
 #include <assert.h>
 #include <cmath>
 
-int isPowerOfTwo (unsigned int x)
-{
-    return ((x != 0) && ((x & (~x + 1)) == x));
-}
+#include "utils.h"
 
 Parameters::Parameters()
 : startPrice(100.0)
@@ -15,8 +12,6 @@ Parameters::Parameters()
 , dividendRate(0.02)
 , expiryTime(10.0)
 , volatility(0.15)
-//, jumpMean(0.1)
-, jumpMean(0.0)
 , driftRate(-1.08)
 , normalStdev(0.4)
 , logBoundary(7.5)
@@ -29,8 +24,17 @@ Parameters::Parameters()
 
     timeIncrement = expiryTime / resolution;
 
+    // No jumps.
+    jumpMean = 0.0;
+    kappa = 0.0;
+}
+
+void Parameters::enableJumps()
+{
+    // When jumps were not enabled, the mean should be zero.
+    assert(jumpMean == 0.0);
+    jumpMean = 0.1;
+
     // Calculation of kappa, see p.13 of paper
     kappa = exp(driftRate + normalStdev * normalStdev / 2.0) - 1.0;
-
-    kappa = 0.0;
 }

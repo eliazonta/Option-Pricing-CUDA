@@ -60,6 +60,9 @@ struct Parameters
     // Symbol: κ (kappa)
     double kappa;
 
+    // Simulate jumps with jump diffusion
+    bool useJumps;
+
     // Put or Call
     OptionPayoffType optionPayoffType;
 
@@ -67,4 +70,6 @@ struct Parameters
     OptionExerciseType optionExerciseType;
 
     Parameters();
+
+    void enableJumps();
 };

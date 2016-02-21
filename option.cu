@@ -7,6 +7,7 @@
 #include <cufft.h>
 
 #include "parameters.h"
+#include "utils.h"
 
 using namespace std;
 
@@ -506,6 +507,8 @@ int main(int argc, char** argv)
         static struct option long_options[] = {
             {"payoff",  required_argument, 0, 'p'},
             {"exercise",  required_argument, 0, 'e'},
+            {"jumps",  required_argument, 0, 'j'},
+            {"resolution",  required_argument, 0, 'n'},
             {"timesteps",  required_argument, 0, 't'},
             {0, 0, 0, 0}
         };
@@ -527,6 +530,7 @@ int main(int argc, char** argv)
                     fprintf(stderr, "Option exercise type %s invalid.\n", optarg);
                     abort();
                 }
+                break;
             case 'p':
                 if (!strcmp(optarg, "put")) {
                     params.optionPayoffType = Put;
@@ -536,8 +540,17 @@ int main(int argc, char** argv)
                     fprintf(stderr, "Option payoff type %s invalid.\n", optarg);
                     abort();
                 }
+                break;
+            case 'j':
+                params.enableJumps();
+                break;
+            case 'n':
+                params.resolution = atoi(optarg);
+                assert(isPowerOfTwo(params.resolution));
+                break;
             case 't':
                 params.timesteps = atoi(optarg);
+                break;
             case '?':
                 break;
             default:

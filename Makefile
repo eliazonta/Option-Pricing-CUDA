@@ -1,12 +1,12 @@
 LD_FLAGS = -L/opt/cuda-5.0/lib64 -lcudart -lcufft
 #LD_FLAGS = -L/usr/local/cuda/lib64 -lcudart -lcufft
 
-all: option.o parameters.o
-	g++ -o option option.o parameters.o $(LD_FLAGS)
+all: option.o parameters.o utils.o
+	g++ -o option option.o parameters.o utils.o $(LD_FLAGS)
 
 # Compile without an NVidia card using Ocelot
-intel: option_ocelot.o parameters.o
-	g++ -o option option.o parameters.o `OcelotConfig -l` -lcufft
+intel: option_ocelot.o parameters.o utils.o
+	g++ -o option option.o parameters.o utils.o `OcelotConfig -l` -lcufft
 
 option.o: option.cu
 	nvcc -g -c option.cu
@@ -16,6 +16,9 @@ option_ocelot.o: option.cu
 
 parameters.o: parameters.cpp
 	gcc -g -c parameters.cpp
+
+utils.o: utils.cpp
+	gcc -g -c utils.cpp
 
 clean:
 	rm -rf *.o option
