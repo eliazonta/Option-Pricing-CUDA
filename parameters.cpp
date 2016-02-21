@@ -38,3 +38,19 @@ void Parameters::enableJumps()
     // Calculation of kappa, see p.13 of paper
     kappa = exp(driftRate + normalStdev * normalStdev / 2.0) - 1.0;
 }
+
+DoubleExponential::DoubleExponential()
+: rateUp(3.0465)
+, rateDown(3.0775)
+, probabilityUpJump(0.3445)
+{
+}
+
+double DoubleExponential::evaluate(double y)
+{
+    if (y >= 0) {
+        return probabilityUpJump * rateUp * exp(-rateUp * y);
+    } else {
+        return (1 - probabilityUpJump) * rateDown * exp(rateDown * y);
+    }
+}

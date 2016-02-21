@@ -12,6 +12,10 @@ enum OptionExerciseType
 
 struct Parameters
 {
+    Parameters();
+
+    void enableJumps();
+
     // Symbol: S
     double startPrice;
 
@@ -68,8 +72,32 @@ struct Parameters
 
     // European or American
     OptionExerciseType optionExerciseType;
+};
 
-    Parameters();
+class JumpProbabilityDensity
+{
+public:
+    virtual double evaluate(double y) = 0;
+};
 
-    void enableJumps();
+// This is a 'double' exponential in the sense that it combines two
+// exponential distributions (one for up (positive) jumps, and one
+// for down (negative) jumps) using an indicator variable.
+//
+// The probability density function is:
+// f(y) = p_up * λ1 * exp(-λ1 * y) * [indicator y>=0] +
+//        (1 - p_up) * λ2 * exp(λ2 * y) * [indicator y < 0]
+//
+// Where p_up is the probability of an up jump, λ1, λ2 are the rate parameters
+// of the exponential distrubtion (= 1 / mean).
+class DoubleExponential : public JumpProbabilityDensity
+{
+public:
+    DoubleExponential();
+
+    double evaluate(double y);
+
+    double rateUp;
+    double rateDown;
+    double probabilityUpJump;
 };
