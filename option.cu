@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <getopt.h>
 #include <math_constants.h>
 #include <stdio.h>
 #include <vector>
@@ -455,23 +456,65 @@ void computeGPU(Parameters& params, vector<float>& assetPrices, vector<float>& o
     printf("Interpolated price: %f\n", interpolated);
 }
 
-int main()
+int main(int argc, char** argv)
 {
     assert(sizeof(cufftReal) == sizeof(float));
     assert(sizeof(cufftComplex) == 2 * sizeof(float));
+
+    Parameters params;
+
+    // Parse arguments
+    while (true) {
+        static struct option long_options[] = {
+            {"payoff",  required_argument, 0, 'p'},
+            {"exercise",  required_argument, 0, 'e'},
+            {0, 0, 0, 0}
+        };
+
+        int option_index = 0;
+        char c = getopt_long(argc, argv, "abc:d:f:", long_options, &option_index);
+
+        if (c == -1) {
+            break;
+        }
+
+        switch (c) {
+            case 'e':
+                if (!strcmp(optarg, "european")) {
+                    params.optionExerciseType = European;
+                } else if (!strcmp(optarg, "american")) {
+                    params.optionExerciseType = American;
+                } else {
+                    fprintf(stderr, "Option exercise type %s invalid.\n", optarg);
+                    abort();
+                }
+            case 'p':
+                if (!strcmp(optarg, "put")) {
+                    params.optionPayoffType = Put;
+                } else if (!strcmp(optarg, "call")) {
+                    params.optionPayoffType = Call;
+                } else {
+                    fprintf(stderr, "Option payoff type %s invalid.\n", optarg);
+                    abort();
+                }
+            case '?':
+                break;
+            default:
+                abort();
+        }
+    }
 
     cudaCheck();
 
     printf("\nChecks finished. Starting option calculation...\n\n");
 
-    Parameters params;
     vector<float> assetPrices = assetPricesAtPayoff(params);
     vector<float> optionValues = optionValuesAtPayoff(params, assetPrices);
 
     printPrices(optionValues);
 
     printf("\nComputing CPU results...\n");
-    computeCPU(params, assetPrices, optionValues);
+    //computeCPU(params, assetPrices, optionValues);
     printf("\nComputing GPU results...\n");
     computeGPU(params, assetPrices, optionValues);
 
