@@ -411,37 +411,43 @@ void computeGPU(Parameters& params, vector<float>& assetPrices, vector<float>& o
     checkCufft(cufftPlan1d(&plan, N, CUFFT_R2C, /* deprecated? */ 1));
     checkCufft(cufftPlan1d(&planr, N, CUFFT_C2R, /* deprecated? */ 1));
 
-    // Forward transform
-    checkCufft(cufftExecR2C(plan, d_prices, d_ft));
-
     // Discretization parameters (see p.11)
     float x_max = params.logBoundary;
     float x_min = -params.logBoundary;
     float delta_frequency = (float)(N - 1) / (x_max - x_min) / N;
 
-    // Solve ODE
-    // Note that we solve the ODE only on the first half of the frequency
-    // data. Why? A fourier transform on real (non-complex) data will give
-    // hermetian symmetry, where the second half of the array is just the
-    // complex conjugate of the first half. So cufft & fftw doesn't store
-    // any values in the second half at all! They don't use the second half
-    // of the array either to compute the inverse fourier transform.
-    // See http://www.fftw.org/doc/The-1d-Real_002ddata-DFT.html
-    int ode_size = N / 2;
-    solveODE<<<dim3(ode_size / 512, 1), dim3(min(ode_size, 512), 1)>>>(
-            d_ft, 0.0, params.expiryTime, params.riskFreeRate,
-            params.volatility, params.jumpMean, params.kappa,
-            N, delta_frequency);
+    for (int i = 0; i < params.timesteps; i++) {
+        float from_time = (float)i / params.timesteps * params.expiryTime;
+        float to_time = (float)(i + 1) / params.timesteps * params.expiryTime;
 
-    // Reverse transform
-    checkCufft(cufftExecC2R(planr, d_ft, d_prices));
-    normalize<<<dim3(N / 512, 1), dim3(min((int)N, 512), 1)>>>(d_prices, N);
+        // Forward transform
+        checkCufft(cufftExecR2C(plan, d_prices, d_ft));
+
+        // Solve ODE
+        // Note that we solve the ODE only on the first half of the frequency
+        // data. Why? A fourier transform on real (non-complex) data will give
+        // hermetian symmetry, where the second half of the array is just the
+        // complex conjugate of the first half. So cufft & fftw doesn't store
+        // any values in the second half at all! They don't use the second half
+        // of the array either to compute the inverse fourier transform.
+        // See http://www.fftw.org/doc/The-1d-Real_002ddata-DFT.html
+        int ode_size = N / 2;
+        solveODE<<<dim3(ode_size / 512, 1), dim3(min(ode_size, 512), 1)>>>(
+                d_ft, from_time, to_time, params.riskFreeRate,
+                params.volatility, params.jumpMean, params.kappa,
+                N, delta_frequency);
+
+        // Reverse transform
+        checkCufft(cufftExecC2R(planr, d_ft, d_prices));
+        normalize<<<dim3(N / 512, 1), dim3(min((int)N, 512), 1)>>>(d_prices, N);
+    }
 
     checkCuda(cudaMemcpy(&initialValues[0], d_prices, sizeof(cufftReal) * N,
                          cudaMemcpyDeviceToHost));
 
     // Destroy the cuFFT plan.
     cufftDestroy(plan);
+    cufftDestroy(planr);
     cudaFree(d_prices);
     cudaFree(d_ft);
 
@@ -468,6 +474,7 @@ int main(int argc, char** argv)
         static struct option long_options[] = {
             {"payoff",  required_argument, 0, 'p'},
             {"exercise",  required_argument, 0, 'e'},
+            {"timesteps",  required_argument, 0, 't'},
             {0, 0, 0, 0}
         };
 
@@ -497,6 +504,8 @@ int main(int argc, char** argv)
                     fprintf(stderr, "Option payoff type %s invalid.\n", optarg);
                     abort();
                 }
+            case 't':
+                params.timesteps = atoi(optarg);
             case '?':
                 break;
             default:

@@ -49,6 +49,11 @@ struct Parameters
     // Symbol: N
     int resolution;
 
+    // Number of timesteps to perform (number of times to go to fourier
+    // space and back). For European options, this does not need to be
+    // greater than one.
+    int timesteps;
+
     // Symbol: delta t
     double timeIncrement;
 

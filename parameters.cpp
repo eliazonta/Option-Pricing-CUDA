@@ -16,6 +16,7 @@ Parameters::Parameters()
 , normalStdev(0.4)
 , logBoundary(7.5)
 , resolution(2048)
+, timesteps(1)
 , optionPayoffType(Put)
 , optionExerciseType(European)
 {
