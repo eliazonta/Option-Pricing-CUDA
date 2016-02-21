@@ -3,6 +3,11 @@
 #include <assert.h>
 #include <cmath>
 
+int isPowerOfTwo (unsigned int x)
+{
+    return ((x != 0) && ((x & (~x + 1)) == x));
+}
+
 Parameters::Parameters()
 : startPrice(100.0)
 , strikePrice(100.0)
@@ -20,7 +25,7 @@ Parameters::Parameters()
 , optionPayoffType(Put)
 , optionExerciseType(European)
 {
-    assert(resolution % 512 == 0);
+    assert(isPowerOfTwo(resolution));
 
     timeIncrement = expiryTime / resolution;
 

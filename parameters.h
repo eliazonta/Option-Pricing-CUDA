@@ -47,12 +47,12 @@ struct Parameters
     double logBoundary;
 
     // Symbol: N
-    int resolution;
+    unsigned int resolution;
 
     // Number of timesteps to perform (number of times to go to fourier
     // space and back). For European options, this does not need to be
     // greater than one.
-    int timesteps;
+    unsigned int timesteps;
 
     // Symbol: delta t
     double timeIncrement;
