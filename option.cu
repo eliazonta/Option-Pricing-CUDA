@@ -88,11 +88,16 @@ void earlyExercise(cufftReal* ft, float startPrice, float strikePrice,
 
 __global__
 void solveODE(cufftComplex* ft,
+              cufftComplex* jump_ft,   // Fourier transform of the jump function
               float from_time,         // τ_l (T - t_l)
               float to_time,           // τ_u (T - t_u)
-              float riskFreeRate, float volatility,
-              float jumpMean, float kappa,
-              int N, float delta_frequency)
+              float riskFreeRate,
+              float dividend,
+              float volatility,
+              float jumpMean,
+              float kappa,
+              float delta_frequency,
+              int N)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -108,18 +113,23 @@ void solveODE(cufftComplex* ft,
     float k = delta_frequency * m;
 
     // Calculate Ψ (psi) (2.14)
+    // The dividend is shown on p.13
     // Equation slightly simplified to save a few operations.
+    // TODO: Continuous dividends?
     float fst_term = volatility * M_PI * k;
-    float psi_real = (-2.0 * fst_term * fst_term) - (riskFreeRate + jumpMean);
-    float psi_imag = (riskFreeRate - jumpMean * kappa - volatility * volatility / 2.0) *
-                      (2 * M_PI * k);
+    cufftComplex psi = make_cuComplex(
+            (-2.0 * fst_term * fst_term) - (riskFreeRate + jumpMean),
+            (riskFreeRate - dividend - jumpMean * kappa - volatility * volatility / 2.0) *
+                      (2 * M_PI * k));
 
-    // TODO: jump component.
+    // Jump component.
+    if (jump_ft) {
+        psi = cuCaddf(psi, cuComplexScalarMult(jumpMean, jump_ft[idx]));
+    }
 
     // Solution to ODE (2.27)
     float delta_tau = to_time - from_time;
-    cufftComplex exponent =
-        make_cuComplex(psi_real * delta_tau, psi_imag * delta_tau);
+    cufftComplex exponent = cuComplexScalarMult(delta_tau, psi);
     cufftComplex exponential = cuComplexExponential(exponent);
 
     cufftComplex new_value = cuCmulf(old_value, exponential);
@@ -171,6 +181,33 @@ vector<float> optionValuesAtPayoff(Parameters& prms, vector<float>& assetPrices)
     }
 
     return out;
+}
+
+// Fourier transform of the jump function.
+vector<cufftComplex> jumpFT(Parameters& prms, float delta_frequency)
+{
+    int N = prms.resolution;
+
+    // See p.13
+    vector<cufftComplex> ft(N);
+    for (int i = 0; i < N; i++) {
+        // Frequency (see p.11 for discretization).
+        float m;
+        if (i <= N / 2) {
+            m = i;
+        } else {
+            m = i - N;
+        }
+        float k = delta_frequency * m;
+
+        float real = M_PI * k * prms.normalStdev;
+        real = -2 * real * real;
+        float imag = 2 * M_PI * k * prms.driftRate;
+        cufftComplex exponent = make_cuComplex(real, imag);
+        ft[i] = cuComplexExponential(exponent);
+    }
+
+    return ft;
 }
 
 void printComplex(cufftComplex x) {
@@ -440,6 +477,15 @@ void computeGPU(Parameters& params, vector<float>& assetPrices, vector<float>& o
     float delta_x = (x_max - x_min) / (N - 1);
     float delta_frequency = (float)(N - 1) / (x_max - x_min) / N;
 
+    // Jump function
+    vector<cufftComplex> jump_ft = jumpFT(params, delta_frequency);
+    cufftComplex *d_jump_ft = NULL;
+    if (params.useJumps) {
+        checkCuda(cudaMalloc((void**)&d_jump_ft, sizeof(cufftComplex) * N));
+        checkCuda(cudaMemcpy(d_jump_ft, &jump_ft[0], sizeof(cufftComplex) * N,
+                             cudaMemcpyHostToDevice));
+    }
+
     for (int i = 0; i < params.timesteps; i++) {
         float from_time = (float)i / params.timesteps * params.expiryTime;
         float to_time = (float)(i + 1) / params.timesteps * params.expiryTime;
@@ -457,9 +503,10 @@ void computeGPU(Parameters& params, vector<float>& assetPrices, vector<float>& o
         // See http://www.fftw.org/doc/The-1d-Real_002ddata-DFT.html
         int ode_size = N / 2;
         solveODE<<<dim3(max(ode_size / 512, 1), 1), dim3(min(ode_size, 512), 1)>>>(
-                d_ft, from_time, to_time, params.riskFreeRate,
+                d_ft, d_jump_ft, from_time, to_time,
+                params.riskFreeRate, params.dividend,
                 params.volatility, params.jumpMean, params.kappa,
-                N, delta_frequency);
+                delta_frequency, N);
 
         // Reverse transform
         checkCufft(cufftExecC2R(planr, d_ft, d_prices));
@@ -483,6 +530,7 @@ void computeGPU(Parameters& params, vector<float>& assetPrices, vector<float>& o
     cufftDestroy(planr);
     cudaFree(d_prices);
     cudaFree(d_ft);
+    cudaFree(d_jump_ft);
 
     float answer_index = -x_min * (N - 1) / (x_max - x_min);
     float price_lower = initialValues[(int)floor(answer_index)];
@@ -507,7 +555,8 @@ int main(int argc, char** argv)
         static struct option long_options[] = {
             {"payoff",  required_argument, 0, 'p'},
             {"exercise",  required_argument, 0, 'e'},
-            {"jumps",  required_argument, 0, 'j'},
+            {"dividend",  required_argument, 0, 'd'},
+            {"jumps",  no_argument, 0, 'j'},
             {"resolution",  required_argument, 0, 'n'},
             {"timesteps",  required_argument, 0, 't'},
             {0, 0, 0, 0}
@@ -540,6 +589,9 @@ int main(int argc, char** argv)
                     fprintf(stderr, "Option payoff type %s invalid.\n", optarg);
                     abort();
                 }
+                break;
+            case 'd':
+                params.dividend = atof(optarg);
                 break;
             case 'j':
                 params.enableJumps();

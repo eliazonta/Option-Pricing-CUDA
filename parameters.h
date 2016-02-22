@@ -47,6 +47,10 @@ struct Parameters
     // another variable name.
     double normalStdev;
 
+    // Symbol: q
+    // Continuous dividend rate.
+    double dividend;
+
     // Symbol: x_min and x_max
     double logBoundary;
 

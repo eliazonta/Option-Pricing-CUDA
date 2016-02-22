@@ -27,6 +27,7 @@ Parameters::Parameters()
     // No jumps.
     jumpMean = 0.0;
     kappa = 0.0;
+    dividend = 0.0;
 }
 
 void Parameters::enableJumps()
