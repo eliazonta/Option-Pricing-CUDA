@@ -19,6 +19,7 @@ Parameters::Parameters()
 , timesteps(1)
 , optionPayoffType(Put)
 , optionExerciseType(European)
+, verbose(false)
 {
     assert(isPowerOfTwo(resolution));
 

@@ -302,7 +302,7 @@ void printDevProp(cudaDeviceProp devProp)
     return;
 }
 
-void printAllDevices()
+void printAllDevices(bool verbose)
 {
     // Number of CUDA devices
     int devCount;
@@ -323,7 +323,9 @@ void printAllDevices()
         printf("\nCUDA Device #%d\n", i);
         cudaDeviceProp devProp;
         cudaGetDeviceProperties(&devProp, i);
-        printDevProp(devProp);
+
+        if (verbose)
+            printDevProp(devProp);
     }
 }
 
@@ -359,13 +361,13 @@ void helloWorld()
 }
 
 // Run a couple tests to see that CUDA works properly.
-void cudaCheck()
+void cudaCheck(bool verbose)
 {
     printf("Calling cudaFree(0) no-op...\n");
     cudaFree(0);
     printf("Calling cudaFree(0) succeeded!\n");
 
-    printAllDevices();
+    printAllDevices(verbose);
     helloWorld();
 }
 
@@ -559,6 +561,7 @@ int main(int argc, char** argv)
             {"jumps",  no_argument, 0, 'j'},
             {"resolution",  required_argument, 0, 'n'},
             {"timesteps",  required_argument, 0, 't'},
+            {"verbose",  no_argument, 0, 'v'},
             {0, 0, 0, 0}
         };
 
@@ -603,6 +606,9 @@ int main(int argc, char** argv)
             case 't':
                 params.timesteps = atoi(optarg);
                 break;
+            case 'v':
+                params.verbose = true;
+                break;
             case '?':
                 break;
             default:
@@ -610,7 +616,7 @@ int main(int argc, char** argv)
         }
     }
 
-    cudaCheck();
+    cudaCheck(params.verbose);
 
     printf("\nChecks finished. Starting option calculation...\n\n");
 

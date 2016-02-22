@@ -71,6 +71,9 @@ struct Parameters
     // Simulate jumps with jump diffusion
     bool useJumps;
 
+    // Print more debug info.
+    bool verbose;
+
     // Put or Call
     OptionPayoffType optionPayoffType;
 
