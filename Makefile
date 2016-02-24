@@ -11,14 +11,14 @@ intel: option_ocelot.o parameters.o utils.o
 option.o: option.cu
 	nvcc -g -c option.cu
 
+utils.o: utils.cu
+	nvcc -g -c utils.cu
+
 option_ocelot.o: option.cu
 	nvcc -g -c option.cu -arch=sm_20
 
 parameters.o: parameters.cpp
 	gcc -g -c parameters.cpp
-
-utils.o: utils.cpp
-	gcc -g -c utils.cpp
 
 clean:
 	rm -rf *.o option

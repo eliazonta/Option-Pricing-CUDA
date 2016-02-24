@@ -11,35 +11,6 @@
 
 using namespace std;
 
-// Copied from docs
-// CUFFT_SUCCESS = 0, // The cuFFT operation was successful
-// CUFFT_INVALID_PLAN = 1, // cuFFT was passed an invalid plan handle
-// CUFFT_ALLOC_FAILED = 2, // cuFFT failed to allocate GPU or CPU memory
-// CUFFT_INVALID_TYPE = 3, // No longer used
-// CUFFT_INVALID_VALUE = 4, // User specified an invalid pointer or parameter
-// CUFFT_INTERNAL_ERROR = 5, // Driver or internal cuFFT library error
-// CUFFT_EXEC_FAILED = 6, // Failed to execute an FFT on the GPU
-// CUFFT_SETUP_FAILED = 7, // The cuFFT library failed to initialize
-// CUFFT_INVALID_SIZE = 8, // User specified an invalid transform size
-// CUFFT_UNALIGNED_DATA = 9, // No longer used
-// CUFFT_INCOMPLETE_PARAMETER_LIST = 10, // Missing parameters in call
-// CUFFT_INVALID_DEVICE = 11, // Execution of a plan was on different GPU than plan creation
-// CUFFT_PARSE_ERROR = 12, // Internal plan database error
-// CUFFT_NO_WORKSPACE = 13 // No workspace has been provided prior to plan execution
-#define checkCufft(result) do {           \
-    if (result != CUFFT_SUCCESS) {                      \
-        fprintf(stderr, "CUFFT at %d error: %d\n", __LINE__, result);   \
-        exit(-1);                                       \
-    }                                                   \
-} while(0)
-
-#define checkCuda(result) do {            \
-    if (result != cudaSuccess) {                        \
-        fprintf(stderr, "CUDA at %d error: %d\n", __LINE__, result);   \
-        exit(-1);                                       \
-    }                                                   \
-} while(0)
-
 __host__ __device__ static __inline__
 cufftComplex cuComplexExponential(cufftComplex x)
 {
@@ -55,13 +26,6 @@ cufftComplex cuComplexScalarMult(float scalar, cufftComplex x)
     float a = cuCrealf(x);
     float b = cuCimagf(x);
     return make_cuComplex(scalar * a, scalar * b);
-}
-
-__global__
-void hello(char *a, int *b)
-{
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    a[idx] += b[idx];
 }
 
 __global__
@@ -275,114 +239,6 @@ vector<float> idft(vector<cufftComplex>& in)
         out[i] = cuCrealf(ift[i]);
     }
     return out;
-}
-
-// Print device properties
-void printDevProp(cudaDeviceProp devProp)
-{
-    printf("Major revision number:         %d\n",  devProp.major);
-    printf("Minor revision number:         %d\n",  devProp.minor);
-    printf("Name:                          %s\n",  devProp.name);
-    printf("Total global memory:           %zu\n", devProp.totalGlobalMem);
-    printf("Total shared memory per block: %zu\n", devProp.sharedMemPerBlock);
-    printf("Total registers per block:     %d\n",  devProp.regsPerBlock);
-    printf("Warp size:                     %d\n",  devProp.warpSize);
-    printf("Maximum memory pitch:          %zu\n", devProp.memPitch);
-    printf("Maximum threads per block:     %d\n",  devProp.maxThreadsPerBlock);
-    for (int i = 0; i < 3; ++i)
-    printf("Maximum dimension %d of block:  %d\n", i, devProp.maxThreadsDim[i]);
-    for (int i = 0; i < 3; ++i)
-    printf("Maximum dimension %d of grid:   %d\n", i, devProp.maxGridSize[i]);
-    printf("Clock rate:                    %d\n",  devProp.clockRate);
-    printf("Total constant memory:         %zu\n", devProp.totalConstMem);
-    printf("Texture alignment:             %zu\n", devProp.textureAlignment);
-    printf("Concurrent copy and execution: %s\n",  (devProp.deviceOverlap ? "Yes" : "No"));
-    printf("Number of multiprocessors:     %d\n",  devProp.multiProcessorCount);
-    printf("Kernel execution timeout:      %s\n",  (devProp.kernelExecTimeoutEnabled ? "Yes" : "No"));
-    return;
-}
-
-void printAllDevices(bool debug)
-{
-    // Number of CUDA devices
-    int devCount;
-    cudaGetDeviceCount(&devCount);
-
-    if (devCount < 1) {
-        fprintf(stderr, "Error: no CUDA devices?\n");
-    }
-
-    if (debug) {
-        printf("CUDA Device Query...\n");
-        printf("There are %d CUDA devices.\n", devCount);
-    }
-
-    // For some reason, systems that don't have CUDA devices might
-    // print infinitely many of them. If we run the program accidently,
-    // the program might hang while printing. We don't want that.
-    if (devCount > 5)
-        printf("Printing first 5 devices.\n");
-
-    // Iterate through devices
-    for (int i = 0; i < min(5, devCount); ++i)
-    {
-        // Get device properties
-        if (debug)
-            printf("\nCUDA Device #%d\n", i);
-        cudaDeviceProp devProp;
-        cudaGetDeviceProperties(&devProp, i);
-
-        if (debug)
-            printDevProp(devProp);
-    }
-}
-
-// Prints Hello, World if the GPU code is working right.
-void helloWorld()
-{
-    const int N = 16;
-    const int blocksize = 16;
-
-    char a[N] = "Hello \0\0\0\0\0\0";
-    int b[N] = {15, 10, 6, 0, -11, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-
-    char *ad;
-    int *bd;
-    const int csize = N*sizeof(char);
-    const int isize = N*sizeof(int);
-
-    checkCuda(cudaMalloc( (void**)&ad, csize ));
-    checkCuda(cudaMalloc( (void**)&bd, isize ));
-    checkCuda(cudaMemcpy( ad, a, csize, cudaMemcpyHostToDevice ));
-    checkCuda(cudaMemcpy( bd, b, isize, cudaMemcpyHostToDevice ));
-
-    dim3 dimBlock( blocksize, 1 );
-    dim3 dimGrid( 1, 1 );
-    hello<<<dimGrid, dimBlock>>>(ad, bd);
-    checkCuda(cudaMemcpy( a, ad, csize, cudaMemcpyDeviceToHost ));
-    checkCuda(cudaFree( ad ));
-    checkCuda(cudaFree( bd ));
-
-    if (strcmp(a, "World!")) {
-        fprintf(stderr, "Error: Expected \"World!\", got \"%s\"\n", a);
-        exit(-1);
-    }
-}
-
-// Run a couple tests to see that CUDA works properly.
-void cudaCheck(bool debug)
-{
-    if (debug) {
-        printf("Calling cudaFree(0) no-op...\n");
-    }
-    checkCuda(cudaFree(0));
-    if (debug) {
-        printf("Calling cudaFree(0) succeeded!\n");
-    }
-
-    printAllDevices(debug);
-
-    helloWorld();
 }
 
 void printPrices(vector<float>& prices) {
