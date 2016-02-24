@@ -9,11 +9,10 @@ Parameters::Parameters()
 : startPrice(100.0)
 , strikePrice(100.0)
 , riskFreeRate(0.05)
-, dividendRate(0.02)
+, dividendRate(0.0)
 , expiryTime(10.0)
 , volatility(0.15)
 , driftRate(-1.08)
-, normalStdev(0.4)
 , logBoundary(7.5)
 , resolution(2048)
 , timesteps(1)
@@ -24,36 +23,26 @@ Parameters::Parameters()
 {
     assert(isPowerOfTwo(resolution));
 
-    timeIncrement = expiryTime / resolution;
-
     // No jumps.
+    jumpType = None;
     jumpMean = 0.0;
-    kappa = 0.0;
-    dividend = 0.0;
 }
 
-void Parameters::enableJumps()
+float Parameters::timeIncrement()
 {
-    // When jumps were not enabled, the mean should be zero.
-    assert(jumpMean == 0.0);
-    jumpMean = 0.1;
-
-    // Calculation of kappa, see p.13 of paper
-    kappa = exp(driftRate + normalStdev * normalStdev / 2.0) - 1.0;
+    return expiryTime / resolution;
 }
 
-DoubleExponential::DoubleExponential()
-: rateUp(3.0465)
-, rateDown(3.0775)
-, probabilityUpJump(0.3445)
+float Parameters::kappa()
 {
-}
-
-double DoubleExponential::evaluate(double y)
-{
-    if (y >= 0) {
-        return probabilityUpJump * rateUp * exp(-rateUp * y);
+    if (jumpType == Merton) {
+        // Lippa (2013) p.13
+        return exp(driftRate + mertonNormalStdev * mertonNormalStdev / 2.0) - 1.0;
+    } else if (jumpType == Kou) {
+        // Lippa (2013) p.54
+        return kouUpJumpProbability * kouUpRate / (kouUpRate - 1)
+            + (1 - kouUpJumpProbability) * kouDownRate / (kouDownRate + 1) - 1.0;
     } else {
-        return (1 - probabilityUpJump) * rateDown * exp(rateDown * y);
+        return 0.0;
     }
 }

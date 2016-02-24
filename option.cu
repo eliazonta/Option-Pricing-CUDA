@@ -88,7 +88,7 @@ void solveODE(cufftComplex* ft,
 
     // Jump component.
     if (jump_ft) {
-        psi = cuCaddf(psi, cuComplexScalarMult(jumpMean, jump_ft[idx]));
+        psi = cuCaddf(psi, cuComplexScalarMult(jumpMean, cuConjf(jump_ft[idx])));
     }
 
     // Solution to ODE (2.27)
@@ -147,12 +147,12 @@ vector<float> optionValuesAtPayoff(Parameters& prms, vector<float>& assetPrices)
     return out;
 }
 
-// Fourier transform of the jump function.
-vector<cufftComplex> jumpFT(Parameters& prms, float delta_frequency)
+// Fourier transform of the Merton jump function.
+vector<cufftComplex> mertonJumpFT(Parameters& prms, float delta_frequency)
 {
     int N = prms.resolution;
 
-    // See p.13
+    // See Lippa (2013) p.13
     vector<cufftComplex> ft(N);
     for (int i = 0; i < N; i++) {
         // Frequency (see p.11 for discretization).
@@ -164,11 +164,40 @@ vector<cufftComplex> jumpFT(Parameters& prms, float delta_frequency)
         }
         float k = delta_frequency * m;
 
-        float real = M_PI * k * prms.normalStdev;
+        float real = M_PI * k * prms.mertonNormalStdev;
         real = -2 * real * real;
-        float imag = 2 * M_PI * k * prms.driftRate;
+        float imag = -2 * M_PI * k * prms.driftRate;
         cufftComplex exponent = make_cuComplex(real, imag);
         ft[i] = cuComplexExponential(exponent);
+    }
+
+    return ft;
+}
+
+// Fourier transform of the Kou jump function
+vector<cufftComplex> kouJumpFT(Parameters& prms, float delta_frequency)
+{
+    int N = prms.resolution;
+    float p = prms.kouUpJumpProbability;
+
+    // See Lippa (2013) p.54
+    vector<cufftComplex> ft(N);
+    for (int i = 0; i < N; i++) {
+        // Frequency (see p.11 for discretization).
+        float m;
+        if (i <= N / 2) {
+            m = i;
+        } else {
+            m = i - N;
+        }
+        float k = delta_frequency * m;
+
+        cufftComplex up = cuCdivf(make_cuComplex(p, 0),
+                make_cuComplex(1, 2 * M_PI * k / prms.kouUpRate));
+        cufftComplex down = cuCdivf(make_cuComplex(1 - p, 0),
+                make_cuComplex(1, -2 * M_PI * k / prms.kouDownRate));
+
+        ft[i] = cuCaddf(up, down);
     }
 
     return ft;
@@ -267,7 +296,7 @@ void computeCPU(Parameters& params, vector<float>& assetPrices, vector<float>& o
     float riskFreeRate = params.riskFreeRate;
     float volatility = params.volatility;
     float jumpMean = params.jumpMean;
-    float kappa = params.kappa;
+    float kappa = params.kappa();
 
     // Forward transform
     vector<cufftComplex> ft = dft(optionValues);
@@ -355,9 +384,16 @@ void computeGPU(Parameters& params, vector<float>& assetPrices, vector<float>& o
     float delta_frequency = (float)(N - 1) / (x_max - x_min) / N;
 
     // Jump function
-    vector<cufftComplex> jump_ft = jumpFT(params, delta_frequency);
+    vector<cufftComplex> jump_ft;
     cufftComplex *d_jump_ft = NULL;
-    if (params.useJumps) {
+
+    if (params.jumpType == Merton) {
+        jump_ft = mertonJumpFT(params, delta_frequency);
+    } else if (params.jumpType == Kou) {
+        jump_ft = kouJumpFT(params, delta_frequency);
+    }
+
+    if (params.jumpType != None) {
         checkCuda(cudaMalloc((void**)&d_jump_ft, sizeof(cufftComplex) * N));
         checkCuda(cudaMemcpy(d_jump_ft, &jump_ft[0], sizeof(cufftComplex) * N,
                              cudaMemcpyHostToDevice));
@@ -381,8 +417,8 @@ void computeGPU(Parameters& params, vector<float>& assetPrices, vector<float>& o
         int ode_size = N / 2;
         solveODE<<<dim3(max(ode_size / 512, 1), 1), dim3(min(ode_size, 512), 1)>>>(
                 d_ft, d_jump_ft, from_time, to_time,
-                params.riskFreeRate, params.dividend,
-                params.volatility, params.jumpMean, params.kappa,
+                params.riskFreeRate, params.dividendRate,
+                params.volatility, params.jumpMean, params.kappa(),
                 delta_frequency, N);
 
         // Reverse transform
@@ -439,7 +475,18 @@ int main(int argc, char** argv)
             {"exercise",  required_argument, 0, 'e'},
             {"dividend",  required_argument, 0, 'q'},
             {"debug",  no_argument, 0, 'd'},
-            {"jumps",  no_argument, 0, 'j'},
+            {"mertonjumps",  no_argument, 0, 'm'},
+            {"koujumps",  no_argument, 0, 'k'},
+            {"lambda",  required_argument, 0, 'l'},
+            {"p",  required_argument, 0, '0'},
+            {"eta1",  required_argument, 0, '1'},
+            {"eta2",  required_argument, 0, '2'},
+            {"gamma",  required_argument, 0, 'y'},
+            {"S",  required_argument, 0, 'S'},
+            {"K",  required_argument, 0, 'K'},
+            {"r",  required_argument, 0, 'r'},
+            {"T",  required_argument, 0, 'T'},
+            {"sigma",  required_argument, 0, 'o'},
             {"resolution",  required_argument, 0, 'n'},
             {"timesteps",  required_argument, 0, 't'},
             {"verbose",  no_argument, 0, 'v'},
@@ -475,13 +522,46 @@ int main(int argc, char** argv)
                 }
                 break;
             case 'q':
-                params.dividend = atof(optarg);
+                params.dividendRate = atof(optarg);
+                break;
+            case 'l':
+                params.jumpMean = atof(optarg);
+                break;
+            case '0':
+                params.kouUpJumpProbability = atof(optarg);
+                break;
+            case '1':
+                params.kouUpRate = atof(optarg);
+                break;
+            case '2':
+                params.kouDownRate = atof(optarg);
+                break;
+            case 'y':
+                params.mertonNormalStdev = atof(optarg);
+                break;
+            case 'S':
+                params.startPrice = atof(optarg);
+                break;
+            case 'K':
+                params.strikePrice = atof(optarg);
+                break;
+            case 'r':
+                params.riskFreeRate = atof(optarg);
+                break;
+            case 'T':
+                params.expiryTime = atof(optarg);
+                break;
+            case 'o':
+                params.volatility = atof(optarg);
                 break;
             case 'd':
                 params.debug = true;
                 break;
-            case 'j':
-                params.enableJumps();
+            case 'm':
+                params.jumpType = Merton;
+                break;
+            case 'k':
+                params.jumpType = Kou;
                 break;
             case 'n':
                 params.resolution = atoi(optarg);

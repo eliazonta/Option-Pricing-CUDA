@@ -10,11 +10,16 @@ enum OptionExerciseType
     American,
 };
 
+enum JumpType
+{
+    None,
+    Merton,
+    Kou,
+};
+
 struct Parameters
 {
     Parameters();
-
-    void enableJumps();
 
     // Symbol: S
     double startPrice;
@@ -26,6 +31,7 @@ struct Parameters
     double riskFreeRate;
 
     // Symbol: q
+    // Continuous dividend rate.
     double dividendRate;
 
     // Symbol: T
@@ -41,16 +47,6 @@ struct Parameters
     // Symbol: μ (mu)
     double driftRate;
 
-    // Symbol: γ (gamma)
-    // Normally, this is σ (standard deviation) in the normal,
-    // but here we already use σ for the volatility so we need
-    // another variable name.
-    double normalStdev;
-
-    // Symbol: q
-    // Continuous dividend rate.
-    double dividend;
-
     // Symbol: x_min and x_max
     double logBoundary;
 
@@ -63,49 +59,42 @@ struct Parameters
     unsigned int timesteps;
 
     // Symbol: delta t
-    double timeIncrement;
-
-    // Symbol: κ (kappa)
-    double kappa;
-
-    // Simulate jumps with jump diffusion
-    bool useJumps;
-
-    // Print more debug info.
-    bool debug;
-    bool verbose;
+    float timeIncrement();
 
     // Put or Call
     OptionPayoffType optionPayoffType;
 
     // European or American
     OptionExerciseType optionExerciseType;
-};
 
-class JumpProbabilityDensity
-{
-public:
-    virtual double evaluate(double y) = 0;
-};
+    // ---- Jump specific parameters -----
 
-// This is a 'double' exponential in the sense that it combines two
-// exponential distributions (one for up (positive) jumps, and one
-// for down (negative) jumps) using an indicator variable.
-//
-// The probability density function is:
-// f(y) = p_up * λ1 * exp(-λ1 * y) * [indicator y>=0] +
-//        (1 - p_up) * λ2 * exp(λ2 * y) * [indicator y < 0]
-//
-// Where p_up is the probability of an up jump, λ1, λ2 are the rate parameters
-// of the exponential distrubtion (= 1 / mean).
-class DoubleExponential : public JumpProbabilityDensity
-{
-public:
-    DoubleExponential();
+    JumpType jumpType;
 
-    double evaluate(double y);
+    // Symbol: κ (kappa)
+    float kappa();
 
-    double rateUp;
-    double rateDown;
-    double probabilityUpJump;
+    // Symbol: γ (gamma)
+    // Parameter used for Merton jump distribution, which models jumps
+    // as a standard normal.
+    //
+    // Normally, this is σ (standard deviation) in the normal,
+    // but here we already use σ for the volatility so we need
+    // another variable name.
+    double mertonNormalStdev;
+
+    // Parameters used for Kou jump diffusion, which is based on a
+    // double exponential (a combination of two exponential to represent
+    // up and down jumps).
+    //
+    // Symbols: p, η1, η2
+    double kouUpJumpProbability;
+    double kouUpRate;
+    double kouDownRate;
+
+    // ---- Misc -----
+    //
+    // Print more debug info.
+    bool debug;
+    bool verbose;
 };
