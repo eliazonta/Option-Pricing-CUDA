@@ -302,13 +302,20 @@ void printDevProp(cudaDeviceProp devProp)
     return;
 }
 
-void printAllDevices(bool verbose)
+void printAllDevices(bool debug)
 {
     // Number of CUDA devices
     int devCount;
     cudaGetDeviceCount(&devCount);
-    printf("CUDA Device Query...\n");
-    printf("There are %d CUDA devices.\n", devCount);
+
+    if (devCount < 1) {
+        fprintf(stderr, "Error: no CUDA devices?\n");
+    }
+
+    if (debug) {
+        printf("CUDA Device Query...\n");
+        printf("There are %d CUDA devices.\n", devCount);
+    }
 
     // For some reason, systems that don't have CUDA devices might
     // print infinitely many of them. If we run the program accidently,
@@ -320,11 +327,12 @@ void printAllDevices(bool verbose)
     for (int i = 0; i < min(5, devCount); ++i)
     {
         // Get device properties
-        printf("\nCUDA Device #%d\n", i);
+        if (debug)
+            printf("\nCUDA Device #%d\n", i);
         cudaDeviceProp devProp;
         cudaGetDeviceProperties(&devProp, i);
 
-        if (verbose)
+        if (debug)
             printDevProp(devProp);
     }
 }
@@ -343,8 +351,6 @@ void helloWorld()
     const int csize = N*sizeof(char);
     const int isize = N*sizeof(int);
 
-    printf("%s", a);
-
     checkCuda(cudaMalloc( (void**)&ad, csize ));
     checkCuda(cudaMalloc( (void**)&bd, isize ));
     checkCuda(cudaMemcpy( ad, a, csize, cudaMemcpyHostToDevice ));
@@ -357,17 +363,25 @@ void helloWorld()
     checkCuda(cudaFree( ad ));
     checkCuda(cudaFree( bd ));
 
-    printf("%s\n", a);
+    if (strcmp(a, "World!")) {
+        fprintf(stderr, "Error: Expected \"World!\", got \"%s\"\n", a);
+        exit(-1);
+    }
 }
 
 // Run a couple tests to see that CUDA works properly.
-void cudaCheck(bool verbose)
+void cudaCheck(bool debug)
 {
-    printf("Calling cudaFree(0) no-op...\n");
-    cudaFree(0);
-    printf("Calling cudaFree(0) succeeded!\n");
+    if (debug) {
+        printf("Calling cudaFree(0) no-op...\n");
+    }
+    checkCuda(cudaFree(0));
+    if (debug) {
+        printf("Calling cudaFree(0) succeeded!\n");
+    }
 
-    printAllDevices(verbose);
+    printAllDevices(debug);
+
     helloWorld();
 }
 
@@ -445,10 +459,15 @@ void computeCPU(Parameters& params, vector<float>& assetPrices, vector<float>& o
     float price_upper = ift[(int)ceil(answer_index)];
     float interpolated = price_lower * (ceil(answer_index) - answer_index) +
                          price_upper * (answer_index - floor(answer_index));
-    printf("Price is at index %f. Price at %d: %f. Price at %d: %f.\n",
-            answer_index, (int)floor(answer_index), price_lower,
-            (int)ceil(answer_index), price_upper);
-    printf("Interpolated price: %f\n", interpolated);
+
+    if (params.verbose) {
+        printf("Price is at index %f. Price at %d: %f. Price at %d: %f.\n",
+                answer_index, (int)floor(answer_index), price_lower,
+                (int)ceil(answer_index), price_upper);
+        printf("Interpolated price: %f\n", interpolated);
+    } else {
+        printf("%f\n", interpolated);
+    }
 }
 
 void computeGPU(Parameters& params, vector<float>& assetPrices, vector<float>& optionValues)
@@ -539,10 +558,15 @@ void computeGPU(Parameters& params, vector<float>& assetPrices, vector<float>& o
     float price_upper = initialValues[(int)ceil(answer_index)];
     float interpolated = price_lower * (ceil(answer_index) - answer_index) +
                          price_upper * (answer_index - floor(answer_index));
-    printf("Price is at index %f. Price at %d: %f. Price at %d: %f.\n",
-            answer_index, (int)floor(answer_index), price_lower,
-            (int)ceil(answer_index), price_upper);
-    printf("Interpolated price: %f\n", interpolated);
+
+    if (params.verbose) {
+        printf("Price is at index %f. Price at %d: %f. Price at %d: %f.\n",
+                answer_index, (int)floor(answer_index), price_lower,
+                (int)ceil(answer_index), price_upper);
+        printf("Interpolated price: %f\n", interpolated);
+    } else {
+        printf("%f\n", interpolated);
+    }
 }
 
 int main(int argc, char** argv)
@@ -557,7 +581,8 @@ int main(int argc, char** argv)
         static struct option long_options[] = {
             {"payoff",  required_argument, 0, 'p'},
             {"exercise",  required_argument, 0, 'e'},
-            {"dividend",  required_argument, 0, 'd'},
+            {"dividend",  required_argument, 0, 'q'},
+            {"debug",  no_argument, 0, 'd'},
             {"jumps",  no_argument, 0, 'j'},
             {"resolution",  required_argument, 0, 'n'},
             {"timesteps",  required_argument, 0, 't'},
@@ -593,8 +618,11 @@ int main(int argc, char** argv)
                     abort();
                 }
                 break;
-            case 'd':
+            case 'q':
                 params.dividend = atof(optarg);
+                break;
+            case 'd':
+                params.debug = true;
                 break;
             case 'j':
                 params.enableJumps();
@@ -616,26 +644,19 @@ int main(int argc, char** argv)
         }
     }
 
-    cudaCheck(params.verbose);
+    cudaCheck(params.debug);
 
-    printf("\nChecks finished. Starting option calculation...\n\n");
+    if (params.verbose) {
+        printf("\nChecks finished. Starting option calculation...\n\n");
+    }
 
     vector<float> assetPrices = assetPricesAtPayoff(params);
     vector<float> optionValues = optionValuesAtPayoff(params, assetPrices);
 
-    printf("\nComputing CPU results...\n");
-    //computeCPU(params, assetPrices, optionValues);
-    printf("\nComputing GPU results...\n");
+    if (params.verbose) {
+        printf("\nComputing GPU results...\n");
+    }
     computeGPU(params, assetPrices, optionValues);
-
-    /*
-    float X[] = {1, 0, 1, 0, 1, 0, 1, 0};
-    vector<float> a(X, X + 8);
-    vector<cufftComplex> x = dft(a);
-    printComplexArray(x);
-    vector<cufftComplex> y = idft(x);
-    printComplexArray(y);
-    */
 
     return EXIT_SUCCESS;
 }

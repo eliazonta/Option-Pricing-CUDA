@@ -72,6 +72,7 @@ struct Parameters
     bool useJumps;
 
     // Print more debug info.
+    bool debug;
     bool verbose;
 
     // Put or Call
