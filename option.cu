@@ -84,6 +84,59 @@ void earlyExercise(double* ft, double startPrice, double strikePrice,
     }
 }
 
+// Fourier transform of the Merton jump function.
+__global__
+void prepareMertonJumpFT(complex* jump_ft, double delta_frequency,
+                         int N, double mertonNormalStdev, double driftRate)
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    // Frequency (see p.11 for discretization).
+    double m;
+    if (idx <= N / 2) {
+        m = idx;
+    } else {
+        m = idx - N;
+    }
+    double k = delta_frequency * m;
+
+    // See Lippa (2013) p.13
+    double real = M_PI * k * mertonNormalStdev;
+    real = -2 * real * real;
+    double imag = -2 * M_PI * k * driftRate;
+    complex exponent = makeComplex(real, imag);
+
+    jump_ft[idx] = cuComplexExponential(exponent);
+}
+
+// Fourier transform of the Kou jump function
+__global__
+void prepareKouJumpFT(complex* jump_ft, double delta_frequency,
+                      int N, double kouUpJumpProbability,
+                      double kouUpRate, double kouDownRate)
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    double p = kouUpJumpProbability;
+
+    // Frequency (see p.11 for discretization).
+    double m;
+    if (idx <= N / 2) {
+        m = idx;
+    } else {
+        m = idx - N;
+    }
+    double k = delta_frequency * m;
+
+    // See Lippa (2013) p.54
+    complex up = cuCdiv(makeComplex(p, 0),
+            makeComplex(1, 2 * M_PI * k / kouUpRate));
+    complex down = cuCdiv(makeComplex(1 - p, 0),
+            makeComplex(1, -2 * M_PI * k / kouDownRate));
+
+    jump_ft[idx] = cuCadd(up, down);
+}
+
 __global__
 void solveODE(complex* ft,
               complex* jump_ft,   // Fourier transform of the jump function
@@ -179,62 +232,6 @@ vector<double> optionValuesAtPayoff(Parameters& prms, vector<double>& assetPrice
     }
 
     return out;
-}
-
-// Fourier transform of the Merton jump function.
-vector<complex> mertonJumpFT(Parameters& prms, double delta_frequency)
-{
-    int N = prms.resolution;
-
-    // See Lippa (2013) p.13
-    vector<complex> ft(N);
-    for (int i = 0; i < N; i++) {
-        // Frequency (see p.11 for discretization).
-        double m;
-        if (i <= N / 2) {
-            m = i;
-        } else {
-            m = i - N;
-        }
-        double k = delta_frequency * m;
-
-        double real = M_PI * k * prms.mertonNormalStdev;
-        real = -2 * real * real;
-        double imag = -2 * M_PI * k * prms.driftRate;
-        complex exponent = makeComplex(real, imag);
-        ft[i] = cuComplexExponential(exponent);
-    }
-
-    return ft;
-}
-
-// Fourier transform of the Kou jump function
-vector<complex> kouJumpFT(Parameters& prms, double delta_frequency)
-{
-    int N = prms.resolution;
-    double p = prms.kouUpJumpProbability;
-
-    // See Lippa (2013) p.54
-    vector<complex> ft(N);
-    for (int i = 0; i < N; i++) {
-        // Frequency (see p.11 for discretization).
-        double m;
-        if (i <= N / 2) {
-            m = i;
-        } else {
-            m = i - N;
-        }
-        double k = delta_frequency * m;
-
-        complex up = cuCdiv(makeComplex(p, 0),
-                makeComplex(1, 2 * M_PI * k / prms.kouUpRate));
-        complex down = cuCdiv(makeComplex(1 - p, 0),
-                makeComplex(1, -2 * M_PI * k / prms.kouDownRate));
-
-        ft[i] = cuCadd(up, down);
-    }
-
-    return ft;
 }
 
 void printComplex(complex x) {
@@ -418,19 +415,19 @@ void computeGPU(Parameters& params, vector<double>& assetPrices, vector<double>&
     double delta_frequency = (double)(N - 1) / (x_max - x_min) / N;
 
     // Jump function
-    vector<complex> jump_ft;
     complex *d_jump_ft = NULL;
-
-    if (params.jumpType == Merton) {
-        jump_ft = mertonJumpFT(params, delta_frequency);
-    } else if (params.jumpType == Kou) {
-        jump_ft = kouJumpFT(params, delta_frequency);
-    }
-
     if (params.jumpType != None) {
         checkCuda(cudaMalloc((void**)&d_jump_ft, sizeof(complex) * N));
-        checkCuda(cudaMemcpy(d_jump_ft, &jump_ft[0], sizeof(complex) * N,
-                             cudaMemcpyHostToDevice));
+
+        if (params.jumpType == Merton) {
+            prepareMertonJumpFT<<<max(N / MAX_BLOCK_SIZE, 1), min(N, MAX_BLOCK_SIZE)>>>(
+                    d_jump_ft, delta_frequency, N,
+                    params.mertonNormalStdev, params.driftRate);
+        } else if (params.jumpType == Kou) {
+            prepareKouJumpFT<<<max(N / MAX_BLOCK_SIZE, 1), min(N, MAX_BLOCK_SIZE)>>>(
+                    d_jump_ft, delta_frequency, N,
+                    params.kouUpJumpProbability, params.kouUpRate, params.kouDownRate);
+        }
     }
 
     for (int i = 0; i < params.timesteps; i++) {
