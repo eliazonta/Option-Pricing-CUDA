@@ -9,27 +9,51 @@
 #include "parameters.h"
 #include "utils.h"
 
+#ifdef USE_FLOAT
+
+// For quick testing of doubles only, otherwise this is obviously a terrible idea.
+#define double float
+#define complex cufftComplex
+#define cuCreal cuCrealf
+#define cuCimag cuCimagf
+#define cuCadd cuCaddf
+#define cuCmul cuCmulf
+#define cuCdiv cuCdivf
+#define cuConj cuConjf
+#define CUFFT_D2Z CUFFT_R2C
+#define CUFFT_Z2D CUFFT_C2R
+#define cufftExecD2Z cufftExecR2C
+#define cufftExecZ2D cufftExecC2R
+#define makeComplex make_cuComplex
+
+#else
+
+#define complex cufftDoubleComplex
+#define makeComplex make_cuDoubleComplex
+
+#endif
+
 using namespace std;
 
 __host__ __device__ static __inline__
-cufftComplex cuComplexExponential(cufftComplex x)
+complex cuComplexExponential(complex x)
 {
-    float a = cuCrealf(x);
-    float b = cuCimagf(x);
-    float ea = exp(a);
-    return make_cuComplex(ea * cos(b), ea * sin(b));
+    double a = cuCreal(x);
+    double b = cuCimag(x);
+    double ea = exp(a);
+    return makeComplex(ea * cos(b), ea * sin(b));
 }
 
 __host__ __device__ static __inline__
-cufftComplex cuComplexScalarMult(float scalar, cufftComplex x)
+complex cuComplexScalarMult(double scalar, complex x)
 {
-    float a = cuCrealf(x);
-    float b = cuCimagf(x);
-    return make_cuComplex(scalar * a, scalar * b);
+    double a = cuCreal(x);
+    double b = cuCimag(x);
+    return makeComplex(scalar * a, scalar * b);
 }
 
 __global__
-void normalize(cufftReal* ft, int length)
+void normalize(double* ft, int length)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     ft[idx] /= length;
@@ -37,12 +61,12 @@ void normalize(cufftReal* ft, int length)
 
 __global__
 // TODO: Need better argument names for the last two...
-void earlyExercise(cufftReal* ft, float startPrice, float strikePrice,
-                   float x_min, float delta_x,
+void earlyExercise(double* ft, double startPrice, double strikePrice,
+                   double x_min, double delta_x,
                    OptionPayoffType type)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    float assetPrice = startPrice * exp(x_min + idx * delta_x);
+    double assetPrice = startPrice * exp(x_min + idx * delta_x);
     if (type == Call) {
         ft[idx] = max(ft[idx], max(assetPrice - strikePrice, 0.0));
     } else {
@@ -51,73 +75,73 @@ void earlyExercise(cufftReal* ft, float startPrice, float strikePrice,
 }
 
 __global__
-void solveODE(cufftComplex* ft,
-              cufftComplex* jump_ft,   // Fourier transform of the jump function
-              float from_time,         // τ_l (T - t_l)
-              float to_time,           // τ_u (T - t_u)
-              float riskFreeRate,
-              float dividend,
-              float volatility,
-              float jumpMean,
-              float kappa,
-              float delta_frequency,
+void solveODE(complex* ft,
+              complex* jump_ft,   // Fourier transform of the jump function
+              double from_time,         // τ_l (T - t_l)
+              double to_time,           // τ_u (T - t_u)
+              double riskFreeRate,
+              double dividend,
+              double volatility,
+              double jumpMean,
+              double kappa,
+              double delta_frequency,
               int N)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
-    cufftComplex old_value = ft[idx];
+    complex old_value = ft[idx];
 
     // Frequency (see p.11 for discretization).
-    float m;
+    double m;
     if (idx <= N / 2) {
         m = idx;
     } else {
         m = idx - N;
     }
-    float k = delta_frequency * m;
+    double k = delta_frequency * m;
 
     // Calculate Ψ (psi) (2.14)
     // The dividend is shown on p.13
     // Equation slightly simplified to save a few operations.
     // TODO: Continuous dividends?
-    float fst_term = volatility * M_PI * k;
-    cufftComplex psi = make_cuComplex(
+    double fst_term = volatility * M_PI * k;
+    complex psi = makeComplex(
             (-2.0 * fst_term * fst_term) - (riskFreeRate + jumpMean),
             (riskFreeRate - dividend - jumpMean * kappa - volatility * volatility / 2.0) *
                       (2 * M_PI * k));
 
     // Jump component.
     if (jump_ft) {
-        psi = cuCaddf(psi, cuComplexScalarMult(jumpMean, cuConjf(jump_ft[idx])));
+        psi = cuCadd(psi, cuComplexScalarMult(jumpMean, cuConj(jump_ft[idx])));
     }
 
     // Solution to ODE (2.27)
-    float delta_tau = to_time - from_time;
-    cufftComplex exponent = cuComplexScalarMult(delta_tau, psi);
-    cufftComplex exponential = cuComplexExponential(exponent);
+    double delta_tau = to_time - from_time;
+    complex exponent = cuComplexScalarMult(delta_tau, psi);
+    complex exponential = cuComplexExponential(exponent);
 
-    cufftComplex new_value = cuCmulf(old_value, exponential);
+    complex new_value = cuCmul(old_value, exponential);
 
     ft[idx] = new_value;
 }
 
-vector<float> assetPricesAtPayoff(Parameters& prms)
+vector<double> assetPricesAtPayoff(Parameters& prms)
 {
-    float N = prms.resolution;
-    vector<float> out(N);
+    double N = prms.resolution;
+    vector<double> out(N);
 
     // Discretization parameters (see p.11)
     // TODO: Factor out into params?
-    float x_max = prms.logBoundary;
-    float x_min = -prms.logBoundary;
-    float delta_x = (x_max - x_min) / (N - 1);
+    double x_max = prms.logBoundary;
+    double x_min = -prms.logBoundary;
+    double delta_x = (x_max - x_min) / (N - 1);
 
     /*
     // Tree parameters (see p.53 of notes).
-    float u = exp(prms.volatility * sqrt(prms.timeIncrement));
-    float d = 1.0 / u;
-    float a = exp(prms.riskFreeRate * prms.timeIncrement);
-    // float p = (a - d) / (u - d);
+    double u = exp(prms.volatility * sqrt(prms.timeIncrement));
+    double d = 1.0 / u;
+    double a = exp(prms.riskFreeRate * prms.timeIncrement);
+    // double p = (a - d) / (u - d);
 
     for (int i = 0; i < N; i++) {
         out[i] = prms.startPrice * pow(u, i) * pow(d, N - i);
@@ -131,11 +155,11 @@ vector<float> assetPricesAtPayoff(Parameters& prms)
     return out;
 }
 
-vector<float> optionValuesAtPayoff(Parameters& prms, vector<float>& assetPrices)
+vector<double> optionValuesAtPayoff(Parameters& prms, vector<double>& assetPrices)
 {
-    vector<float> out(prms.resolution);
+    vector<double> out(prms.resolution);
 
-    float N = prms.resolution;
+    double N = prms.resolution;
     for (int i = 0; i < N; i++) {
         if (prms.optionPayoffType == Call) {
             out[i] = max(assetPrices[i] - prms.strikePrice, 0.0);
@@ -148,26 +172,26 @@ vector<float> optionValuesAtPayoff(Parameters& prms, vector<float>& assetPrices)
 }
 
 // Fourier transform of the Merton jump function.
-vector<cufftComplex> mertonJumpFT(Parameters& prms, float delta_frequency)
+vector<complex> mertonJumpFT(Parameters& prms, double delta_frequency)
 {
     int N = prms.resolution;
 
     // See Lippa (2013) p.13
-    vector<cufftComplex> ft(N);
+    vector<complex> ft(N);
     for (int i = 0; i < N; i++) {
         // Frequency (see p.11 for discretization).
-        float m;
+        double m;
         if (i <= N / 2) {
             m = i;
         } else {
             m = i - N;
         }
-        float k = delta_frequency * m;
+        double k = delta_frequency * m;
 
-        float real = M_PI * k * prms.mertonNormalStdev;
+        double real = M_PI * k * prms.mertonNormalStdev;
         real = -2 * real * real;
-        float imag = -2 * M_PI * k * prms.driftRate;
-        cufftComplex exponent = make_cuComplex(real, imag);
+        double imag = -2 * M_PI * k * prms.driftRate;
+        complex exponent = makeComplex(real, imag);
         ft[i] = cuComplexExponential(exponent);
     }
 
@@ -175,41 +199,41 @@ vector<cufftComplex> mertonJumpFT(Parameters& prms, float delta_frequency)
 }
 
 // Fourier transform of the Kou jump function
-vector<cufftComplex> kouJumpFT(Parameters& prms, float delta_frequency)
+vector<complex> kouJumpFT(Parameters& prms, double delta_frequency)
 {
     int N = prms.resolution;
-    float p = prms.kouUpJumpProbability;
+    double p = prms.kouUpJumpProbability;
 
     // See Lippa (2013) p.54
-    vector<cufftComplex> ft(N);
+    vector<complex> ft(N);
     for (int i = 0; i < N; i++) {
         // Frequency (see p.11 for discretization).
-        float m;
+        double m;
         if (i <= N / 2) {
             m = i;
         } else {
             m = i - N;
         }
-        float k = delta_frequency * m;
+        double k = delta_frequency * m;
 
-        cufftComplex up = cuCdivf(make_cuComplex(p, 0),
-                make_cuComplex(1, 2 * M_PI * k / prms.kouUpRate));
-        cufftComplex down = cuCdivf(make_cuComplex(1 - p, 0),
-                make_cuComplex(1, -2 * M_PI * k / prms.kouDownRate));
+        complex up = cuCdiv(makeComplex(p, 0),
+                makeComplex(1, 2 * M_PI * k / prms.kouUpRate));
+        complex down = cuCdiv(makeComplex(1 - p, 0),
+                makeComplex(1, -2 * M_PI * k / prms.kouDownRate));
 
-        ft[i] = cuCaddf(up, down);
+        ft[i] = cuCadd(up, down);
     }
 
     return ft;
 }
 
-void printComplex(cufftComplex x) {
-    float a = cuCrealf(x);
-    float b = cuCimagf(x);
+void printComplex(complex x) {
+    double a = cuCreal(x);
+    double b = cuCimag(x);
     printf("%f + %fi", a, b);
 }
 
-void printComplexArray(vector<cufftComplex> xs)
+void printComplexArray(vector<complex> xs)
 {
     for (int i = 0; i < xs.size(); i++) {
         printComplex(xs[i]);
@@ -221,32 +245,32 @@ void printComplexArray(vector<cufftComplex> xs)
     printf("\n");
 }
 
-vector<cufftComplex> dft(vector<float>& in)
+vector<complex> dft(vector<double>& in)
 {
-    vector<cufftComplex> out(in.size());
+    vector<complex> out(in.size());
 
     for (int k = 0; k < out.size(); k++) {
-        out[k] = make_cuComplex(0, 0);
+        out[k] = makeComplex(0, 0);
 
         for (int n = 0; n < in.size(); n++) {
-            cufftComplex exponent = make_cuComplex(0, -2.0f * M_PI * k * n / in.size());
-            out[k] = cuCaddf(out[k], cuComplexScalarMult(in[n], cuComplexExponential(exponent)));
+            complex exponent = makeComplex(0, -2.0f * M_PI * k * n / in.size());
+            out[k] = cuCadd(out[k], cuComplexScalarMult(in[n], cuComplexExponential(exponent)));
         }
     }
 
     return out;
 }
 
-vector<cufftComplex> idft_complex(vector<cufftComplex>& in)
+vector<complex> idft_complex(vector<complex>& in)
 {
-    vector<cufftComplex> out(in.size());
+    vector<complex> out(in.size());
 
     for (int k = 0; k < out.size(); k++) {
-        out[k] = make_cuComplex(0, 0);
+        out[k] = makeComplex(0, 0);
 
         for (int n = 0; n < in.size(); n++) {
-            cufftComplex exponent = make_cuComplex(0, 2.0f * M_PI * k * n / in.size());
-            out[k] = cuCaddf(out[k], cuCmulf(in[n], cuComplexExponential(exponent)));
+            complex exponent = makeComplex(0, 2.0f * M_PI * k * n / in.size());
+            out[k] = cuCadd(out[k], cuCmul(in[n], cuComplexExponential(exponent)));
         }
 
         out[k] = cuComplexScalarMult(1.0 / out.size(), out[k]);
@@ -260,17 +284,17 @@ vector<cufftComplex> idft_complex(vector<cufftComplex>& in)
     return out;
 }
 
-vector<float> idft(vector<cufftComplex>& in)
+vector<double> idft(vector<complex>& in)
 {
-    vector<cufftComplex> ift = idft_complex(in);
-    vector<float> out(ift.size());
+    vector<complex> ift = idft_complex(in);
+    vector<double> out(ift.size());
     for (int i = 0; i < ift.size(); i++) {
-        out[i] = cuCrealf(ift[i]);
+        out[i] = cuCreal(ift[i]);
     }
     return out;
 }
 
-void printPrices(vector<float>& prices) {
+void printPrices(vector<double>& prices) {
     int first_negative = -1;
     for (int i = 0; i < prices.size(); i++) {
         printf("%f ", prices[i]);
@@ -282,67 +306,67 @@ void printPrices(vector<float>& prices) {
     printf("First negative number at %d.\n", first_negative);
 }
 
-void computeCPU(Parameters& params, vector<float>& assetPrices, vector<float>& optionValues)
+void computeCPU(Parameters& params, vector<double>& assetPrices, vector<double>& optionValues)
 {
     int N = params.resolution;
 
     // Discretization parameters (see p.11)
-    float x_max = params.logBoundary;
-    float x_min = -params.logBoundary;
-    float delta_frequency = (float)(N - 1) / (x_max - x_min) / N;
+    double x_max = params.logBoundary;
+    double x_min = -params.logBoundary;
+    double delta_frequency = (double)(N - 1) / (x_max - x_min) / N;
 
-    float from_time = 0.0f;
-    float to_time = params.expiryTime;
-    float riskFreeRate = params.riskFreeRate;
-    float volatility = params.volatility;
-    float jumpMean = params.jumpMean;
-    float kappa = params.kappa();
+    double from_time = 0.0f;
+    double to_time = params.expiryTime;
+    double riskFreeRate = params.riskFreeRate;
+    double volatility = params.volatility;
+    double jumpMean = params.jumpMean;
+    double kappa = params.kappa();
 
     // Forward transform
-    vector<cufftComplex> ft = dft(optionValues);
-    vector<cufftComplex> ft2(N);
+    vector<complex> ft = dft(optionValues);
+    vector<complex> ft2(N);
 
     for (int idx = 0; idx < ft.size(); idx++) {
-        cufftComplex old_value = ft[idx];
+        complex old_value = ft[idx];
 
         // Frequency (see p.11 for discretization).
-        float m;
+        double m;
         if (idx <= N / 2) {
             m = idx;
         } else {
             m = idx - N;
         }
-        float k = delta_frequency * m;
+        double k = delta_frequency * m;
 
         // Calculate Ψ (psi) (2.14)
         // Equation slightly simplified to save a few operations.
-        float fst_term = volatility * M_PI * k;
-        float psi_real = (-2.0 * fst_term * fst_term) - (riskFreeRate + jumpMean);
-        float psi_imag = (riskFreeRate - jumpMean * kappa - volatility * volatility / 2.0) *
+        double fst_term = volatility * M_PI * k;
+        double psi_real = (-2.0 * fst_term * fst_term) - (riskFreeRate + jumpMean);
+        double psi_imag = (riskFreeRate - jumpMean * kappa - volatility * volatility / 2.0) *
                           (2 * M_PI * k);
 
         // TODO: jump component.
 
         // Solution to ODE (2.27)
-        float delta_tau = to_time - from_time;
-        cufftComplex exponent =
-            make_cuComplex(psi_real * delta_tau, psi_imag * delta_tau);
-        cufftComplex exponential = cuComplexExponential(exponent);
+        double delta_tau = to_time - from_time;
+        complex exponent =
+            makeComplex(psi_real * delta_tau, psi_imag * delta_tau);
+        complex exponential = cuComplexExponential(exponent);
 
-        cufftComplex new_value = cuCmulf(old_value, exponential);
+        complex new_value = cuCmul(old_value, exponential);
 
         ft2[idx] = new_value;
     }
 
     // Inverse transform
-    vector<float> ift = idft(ft2);
+    vector<double> ift = idft(ft2);
 
     // printPrices(ift);
 
-    float answer_index = -x_min * (N - 1) / (x_max - x_min);
-    float price_lower = ift[(int)floor(answer_index)];
-    float price_upper = ift[(int)ceil(answer_index)];
-    float interpolated = price_lower * (ceil(answer_index) - answer_index) +
+    double answer_index = -x_min * (N - 1) / (x_max - x_min);
+    double price_lower = ift[(int)floor(answer_index)];
+    double price_upper = ift[(int)ceil(answer_index)];
+    double interpolated = price_lower * (ceil(answer_index) - answer_index) +
                          price_upper * (answer_index - floor(answer_index));
 
     if (params.verbose) {
@@ -355,37 +379,37 @@ void computeCPU(Parameters& params, vector<float>& assetPrices, vector<float>& o
     }
 }
 
-void computeGPU(Parameters& params, vector<float>& assetPrices, vector<float>& optionValues)
+void computeGPU(Parameters& params, vector<double>& assetPrices, vector<double>& optionValues)
 {
     // Option values at time t = 0
-    vector<float> initialValues(optionValues.size());
+    vector<double> initialValues(optionValues.size());
 
     int N = params.resolution;
 
-    cufftReal* d_prices;
-    checkCuda(cudaMalloc((void**)&d_prices, sizeof(cufftReal) * N));
-    checkCuda(cudaMemcpy(d_prices, &optionValues[0], sizeof(cufftReal) * N,
+    double* d_prices;
+    checkCuda(cudaMalloc((void**)&d_prices, sizeof(double) * N));
+    checkCuda(cudaMemcpy(d_prices, &optionValues[0], sizeof(double) * N,
                          cudaMemcpyHostToDevice));
 
-    cufftComplex* d_ft;
-    checkCuda(cudaMalloc((void**)&d_ft, sizeof(cufftComplex) * N));
+    complex* d_ft;
+    checkCuda(cudaMalloc((void**)&d_ft, sizeof(complex) * N));
 
     cufftHandle plan;
     cufftHandle planr;
 
     // Float to complex interleaved
-    checkCufft(cufftPlan1d(&plan, N, CUFFT_R2C, /* deprecated? */ 1));
-    checkCufft(cufftPlan1d(&planr, N, CUFFT_C2R, /* deprecated? */ 1));
+    checkCufft(cufftPlan1d(&plan, N, CUFFT_D2Z, /* deprecated? */ 1));
+    checkCufft(cufftPlan1d(&planr, N, CUFFT_Z2D, /* deprecated? */ 1));
 
     // Discretization parameters (see p.11)
-    float x_max = params.logBoundary;
-    float x_min = -params.logBoundary;
-    float delta_x = (x_max - x_min) / (N - 1);
-    float delta_frequency = (float)(N - 1) / (x_max - x_min) / N;
+    double x_max = params.logBoundary;
+    double x_min = -params.logBoundary;
+    double delta_x = (x_max - x_min) / (N - 1);
+    double delta_frequency = (double)(N - 1) / (x_max - x_min) / N;
 
     // Jump function
-    vector<cufftComplex> jump_ft;
-    cufftComplex *d_jump_ft = NULL;
+    vector<complex> jump_ft;
+    complex *d_jump_ft = NULL;
 
     if (params.jumpType == Merton) {
         jump_ft = mertonJumpFT(params, delta_frequency);
@@ -394,17 +418,17 @@ void computeGPU(Parameters& params, vector<float>& assetPrices, vector<float>& o
     }
 
     if (params.jumpType != None) {
-        checkCuda(cudaMalloc((void**)&d_jump_ft, sizeof(cufftComplex) * N));
-        checkCuda(cudaMemcpy(d_jump_ft, &jump_ft[0], sizeof(cufftComplex) * N,
+        checkCuda(cudaMalloc((void**)&d_jump_ft, sizeof(complex) * N));
+        checkCuda(cudaMemcpy(d_jump_ft, &jump_ft[0], sizeof(complex) * N,
                              cudaMemcpyHostToDevice));
     }
 
     for (int i = 0; i < params.timesteps; i++) {
-        float from_time = (float)i / params.timesteps * params.expiryTime;
-        float to_time = (float)(i + 1) / params.timesteps * params.expiryTime;
+        double from_time = (double)i / params.timesteps * params.expiryTime;
+        double to_time = (double)(i + 1) / params.timesteps * params.expiryTime;
 
         // Forward transform
-        checkCufft(cufftExecR2C(plan, d_prices, d_ft));
+        checkCufft(cufftExecD2Z(plan, d_prices, d_ft));
 
         // Solve ODE
         // Note that we solve the ODE only on the first half of the frequency
@@ -422,7 +446,7 @@ void computeGPU(Parameters& params, vector<float>& assetPrices, vector<float>& o
                 delta_frequency, N);
 
         // Reverse transform
-        checkCufft(cufftExecC2R(planr, d_ft, d_prices));
+        checkCufft(cufftExecZ2D(planr, d_ft, d_prices));
         normalize<<<dim3(max(N / 512, 1), 1), dim3(min((int)N, 512), 1)>>>(d_prices, N);
 
         // Consider early exercise for American options. This is the same technique
@@ -435,7 +459,7 @@ void computeGPU(Parameters& params, vector<float>& assetPrices, vector<float>& o
         }
     }
 
-    checkCuda(cudaMemcpy(&initialValues[0], d_prices, sizeof(cufftReal) * N,
+    checkCuda(cudaMemcpy(&initialValues[0], d_prices, sizeof(double) * N,
                          cudaMemcpyDeviceToHost));
 
     // Destroy the cuFFT plan.
@@ -445,10 +469,10 @@ void computeGPU(Parameters& params, vector<float>& assetPrices, vector<float>& o
     cudaFree(d_ft);
     cudaFree(d_jump_ft);
 
-    float answer_index = -x_min * (N - 1) / (x_max - x_min);
-    float price_lower = initialValues[(int)floor(answer_index)];
-    float price_upper = initialValues[(int)ceil(answer_index)];
-    float interpolated = price_lower * (ceil(answer_index) - answer_index) +
+    double answer_index = -x_min * (N - 1) / (x_max - x_min);
+    double price_lower = initialValues[(int)floor(answer_index)];
+    double price_upper = initialValues[(int)ceil(answer_index)];
+    double interpolated = price_lower * (ceil(answer_index) - answer_index) +
                          price_upper * (answer_index - floor(answer_index));
 
     if (params.verbose) {
@@ -463,8 +487,7 @@ void computeGPU(Parameters& params, vector<float>& assetPrices, vector<float>& o
 
 int main(int argc, char** argv)
 {
-    assert(sizeof(cufftReal) == sizeof(float));
-    assert(sizeof(cufftComplex) == 2 * sizeof(float));
+    assert(sizeof(complex) == 2 * sizeof(double));
 
     Parameters params;
 
@@ -586,8 +609,8 @@ int main(int argc, char** argv)
         printf("\nChecks finished. Starting option calculation...\n\n");
     }
 
-    vector<float> assetPrices = assetPricesAtPayoff(params);
-    vector<float> optionValues = optionValuesAtPayoff(params, assetPrices);
+    vector<double> assetPrices = assetPricesAtPayoff(params);
+    vector<double> optionValues = optionValuesAtPayoff(params, assetPrices);
 
     if (params.verbose) {
         printf("\nComputing GPU results...\n");

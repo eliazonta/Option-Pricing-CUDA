@@ -28,12 +28,12 @@ Parameters::Parameters()
     jumpMean = 0.0;
 }
 
-float Parameters::timeIncrement()
+double Parameters::timeIncrement()
 {
     return expiryTime / resolution;
 }
 
-float Parameters::kappa()
+double Parameters::kappa()
 {
     if (jumpType == Merton) {
         // Lippa (2013) p.13

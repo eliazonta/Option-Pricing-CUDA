@@ -59,7 +59,7 @@ struct Parameters
     unsigned int timesteps;
 
     // Symbol: delta t
-    float timeIncrement();
+    double timeIncrement();
 
     // Put or Call
     OptionPayoffType optionPayoffType;
@@ -72,7 +72,7 @@ struct Parameters
     JumpType jumpType;
 
     // Symbol: κ (kappa)
-    float kappa();
+    double kappa();
 
     // Symbol: γ (gamma)
     // Parameter used for Merton jump distribution, which models jumps
