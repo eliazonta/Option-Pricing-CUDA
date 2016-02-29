@@ -11,7 +11,7 @@
 
 #ifdef USE_FLOAT
 
-// For quick testing of doubles only, otherwise this is obviously a terrible idea.
+// For quick testing of floats only, otherwise this is obviously a terrible idea.
 #define double float
 #define complex cufftComplex
 #define cuCreal cuCrealf
@@ -26,10 +26,20 @@
 #define cufftExecZ2D cufftExecC2R
 #define makeComplex make_cuComplex
 
+// If we're using floats, assume that we're using CUDA Compute Capability < 1.3
+// which means the max block size is 512.
+#define MAX_BLOCK_SIZE 512
+
 #else
 
 #define complex cufftDoubleComplex
 #define makeComplex make_cuDoubleComplex
+
+// If we're using floats, assume that we're using CUDA Compute Capability >= 2.x
+// which means the max block size is 1024.
+// (We're ignoring Compute Capability 1.3 which supports doubles but not block
+//  sizes of 1024 since we don't have any devices of that particular generation)
+#define MAX_BLOCK_SIZE 1024
 
 #endif
 
@@ -439,7 +449,7 @@ void computeGPU(Parameters& params, vector<double>& assetPrices, vector<double>&
         // of the array either to compute the inverse fourier transform.
         // See http://www.fftw.org/doc/The-1d-Real_002ddata-DFT.html
         int ode_size = N / 2 + 1;
-        solveODE<<<dim3(max(ode_size / 512, 1), 1), dim3(min(ode_size, 512), 1)>>>(
+        solveODE<<<max(ode_size / MAX_BLOCK_SIZE, 1), min(ode_size, MAX_BLOCK_SIZE)>>>(
                 d_ft, d_jump_ft, from_time, to_time,
                 params.riskFreeRate, params.dividendRate,
                 params.volatility, params.jumpMean, params.kappa(),
@@ -447,13 +457,13 @@ void computeGPU(Parameters& params, vector<double>& assetPrices, vector<double>&
 
         // Reverse transform
         checkCufft(cufftExecZ2D(planr, d_ft, d_prices));
-        normalize<<<dim3(max(N / 512, 1), 1), dim3(min((int)N, 512), 1)>>>(d_prices, N);
+        normalize<<<max(N / MAX_BLOCK_SIZE, 1), min(N, MAX_BLOCK_SIZE)>>>(d_prices, N);
 
         // Consider early exercise for American options. This is the same technique
         // as option pricing using dynamic programming: at each timestep, set the
         // option value to the payoff if is higher than the current option value.
         if (params.optionExerciseType == American) {
-            earlyExercise<<<dim3(max(N / 512, 1), 1), dim3(min((int)N, 512), 1)>>>(
+            earlyExercise<<<max(N / MAX_BLOCK_SIZE, 1), min(N, MAX_BLOCK_SIZE)>>>(
                     d_prices, params.startPrice, params.strikePrice,
                     x_min, delta_x, params.optionPayoffType);
         }

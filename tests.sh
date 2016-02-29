@@ -10,13 +10,13 @@ echo "[42.0707, 2.7238] = blsprice(100, 100, 0.05, 10, 0.15)"
 
 echo ""
 echo "Matlab American Option (based on lattice implementation)"
-echo "Call price: 42.0707"
+echo "Expected Call price: 42.0707"
 ./option --payoff call --exercise american --resolution 2048 --timesteps 10
 ./option --payoff call --exercise american --resolution 2048 --timesteps 100
 ./option --payoff call --exercise american --resolution 2048 --timesteps 1000
 ./option --payoff call --exercise american --resolution 8192 --timesteps 2000
 
-echo "Put price: 7.0639"
+echo "Expected Put price: 7.0639"
 ./option --payoff put --exercise american --resolution 2048 --timesteps 10
 ./option --payoff put --exercise american --resolution 2048 --timesteps 100
 ./option --payoff put --exercise american --resolution 2048 --timesteps 1000
