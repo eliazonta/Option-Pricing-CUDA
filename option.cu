@@ -138,21 +138,14 @@ void prepareKouJumpFT(complex* jump_ft, double delta_frequency,
 }
 
 __global__
-void solveODE(complex* ft,
-              complex* jump_ft,   // Fourier transform of the jump function
-              double from_time,         // τ_l (T - t_l)
-              double to_time,           // τ_u (T - t_u)
-              double riskFreeRate,
-              double dividend,
-              double volatility,
-              double jumpMean,
-              double kappa,
-              double delta_frequency,
-              int N)
+void prepareJumpModelCharacteristic(
+        complex* characteristic, complex* jump_ft,
+        double riskFreeRate, double dividend,
+        double volatility, double jumpMean,
+        double kappa, double delta_frequency,
+        int N)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
-
-    complex old_value = ft[idx];
 
     // Frequency (see p.11 for discretization).
     double m;
@@ -166,7 +159,7 @@ void solveODE(complex* ft,
     // Calculate Ψ (psi) (2.14)
     // The dividend is shown on p.13
     // Equation slightly simplified to save a few operations.
-    // TODO: Continuous dividends?
+    // TODO: Continuous dividend is too specific, there's more interpretations (see thesis).
     double fst_term = volatility * M_PI * k;
     complex psi = makeComplex(
             (-2.0 * fst_term * fst_term) - (riskFreeRate + jumpMean),
@@ -177,6 +170,22 @@ void solveODE(complex* ft,
     if (jump_ft) {
         psi = cuCadd(psi, cuComplexScalarMult(jumpMean, cuConj(jump_ft[idx])));
     }
+
+    characteristic[idx] = psi;
+}
+
+__global__
+void solveODE(complex* ft,
+              complex* characteristic,  // psi
+              double from_time,         // τ_l (T - t_l)
+              double to_time            // τ_u (T - t_u)
+             )
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    complex old_value = ft[idx];
+
+    complex psi = characteristic[idx];
 
     // Solution to ODE (2.27)
     double delta_tau = to_time - from_time;
@@ -415,6 +424,7 @@ void computeGPU(Parameters& params, vector<double>& assetPrices, vector<double>&
     double delta_frequency = (double)(N - 1) / (x_max - x_min) / N;
 
     // Jump function
+    // TODO: I think we're fine with just N/2 + 1 of these.
     complex *d_jump_ft = NULL;
     if (params.jumpType != None) {
         checkCuda(cudaMalloc((void**)&d_jump_ft, sizeof(complex) * N));
@@ -429,6 +439,15 @@ void computeGPU(Parameters& params, vector<double>& assetPrices, vector<double>&
                     params.kouUpJumpProbability, params.kouUpRate, params.kouDownRate);
         }
     }
+
+    // Calculate Ψ (psi) (2.14)
+    complex *d_characteristic = NULL;
+    checkCuda(cudaMalloc((void**)&d_characteristic, sizeof(complex) * N));
+    prepareJumpModelCharacteristic<<<max(N / MAX_BLOCK_SIZE, 1), min(N, MAX_BLOCK_SIZE)>>>(
+            d_characteristic, d_jump_ft,
+            params.riskFreeRate, params.dividendRate,
+            params.volatility, params.jumpMean, params.kappa(),
+            delta_frequency, N);
 
     for (int i = 0; i < params.timesteps; i++) {
         double from_time = (double)i / params.timesteps * params.expiryTime;
@@ -447,10 +466,7 @@ void computeGPU(Parameters& params, vector<double>& assetPrices, vector<double>&
         // See http://www.fftw.org/doc/The-1d-Real_002ddata-DFT.html
         int ode_size = N / 2 + 1;
         solveODE<<<max(ode_size / MAX_BLOCK_SIZE, 1), min(ode_size, MAX_BLOCK_SIZE)>>>(
-                d_ft, d_jump_ft, from_time, to_time,
-                params.riskFreeRate, params.dividendRate,
-                params.volatility, params.jumpMean, params.kappa(),
-                delta_frequency, N);
+                d_ft, d_characteristic, from_time, to_time);
 
         // Reverse transform
         checkCufft(cufftExecZ2D(planr, d_ft, d_prices));
