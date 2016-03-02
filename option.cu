@@ -481,12 +481,6 @@ void computeGPU(Parameters& params, vector<double>& assetPrices, vector<double>&
                 params.CGMY_C, params.CGMY_G, params.CGMY_M, params.CGMY_Y,
                 tgamma(-params.CGMY_Y));
     } else {
-        prepareJumpModelCharacteristic<<<max(N / MAX_BLOCK_SIZE, 1), min(N, MAX_BLOCK_SIZE)>>>(
-                d_characteristic, d_jump_ft,
-                params.riskFreeRate, params.dividendRate,
-                params.volatility, params.jumpMean, params.kappa(),
-                delta_frequency, N);
-
         if (params.jumpType != None) {
             checkCuda(cudaMalloc((void**)&d_jump_ft, sizeof(complex) * N));
 
@@ -500,6 +494,12 @@ void computeGPU(Parameters& params, vector<double>& assetPrices, vector<double>&
                         params.kouUpJumpProbability, params.kouUpRate, params.kouDownRate);
             }
         }
+
+        prepareJumpModelCharacteristic<<<max(N / MAX_BLOCK_SIZE, 1), min(N, MAX_BLOCK_SIZE)>>>(
+                d_characteristic, d_jump_ft,
+                params.riskFreeRate, params.dividendRate,
+                params.volatility, params.jumpMean, params.kappa(),
+                delta_frequency, N);
     }
 
     for (int i = 0; i < params.timesteps; i++) {
