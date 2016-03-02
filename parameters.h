@@ -49,7 +49,8 @@ struct Parameters
     double driftRate;
 
     // Symbol: x_min and x_max
-    double logBoundary;
+    double x_min();
+    double x_max();
 
     // Symbol: N
     unsigned int resolution;
@@ -102,4 +103,8 @@ struct Parameters
     // Print more debug info.
     bool debug;
     bool verbose;
+
+private:
+    // Use x_min and x_max
+    double logBoundary;
 };

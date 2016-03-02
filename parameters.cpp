@@ -33,6 +33,18 @@ double Parameters::timeIncrement()
     return expiryTime / resolution;
 }
 
+double Parameters::x_min()
+{
+    return -logBoundary;
+}
+
+// Adjust x_max so that the option price is located
+// at index N/2 (an integer), so that we don't need to interpolate.
+double Parameters::x_max()
+{
+    return -x_min() * 2 * (resolution - 1) / resolution + x_min();
+}
+
 double Parameters::kappa()
 {
     if (jumpType == Merton) {

@@ -249,8 +249,8 @@ vector<double> assetPricesAtPayoff(Parameters& prms)
 
     // Discretization parameters (see p.11)
     // TODO: Factor out into params?
-    double x_max = prms.logBoundary;
-    double x_min = -prms.logBoundary;
+    double x_max = prms.x_max();
+    double x_min = prms.x_min();
     double delta_x = (x_max - x_min) / (N - 1);
 
     /*
@@ -372,8 +372,8 @@ void computeCPU(Parameters& params, vector<double>& assetPrices, vector<double>&
     int N = params.resolution;
 
     // Discretization parameters (see p.11)
-    double x_max = params.logBoundary;
-    double x_min = -params.logBoundary;
+    double x_max = params.x_max();
+    double x_min = params.x_min();
     double delta_frequency = (double)(N - 1) / (x_max - x_min) / N;
 
     double from_time = 0.0f;
@@ -425,18 +425,12 @@ void computeCPU(Parameters& params, vector<double>& assetPrices, vector<double>&
     // printPrices(ift);
 
     double answer_index = -x_min * (N - 1) / (x_max - x_min);
-    double price_lower = ift[(int)floor(answer_index)];
-    double price_upper = ift[(int)ceil(answer_index)];
-    double interpolated = price_lower * (ceil(answer_index) - answer_index) +
-                         price_upper * (answer_index - floor(answer_index));
+    assert(answer_index == (int)answer_index);
 
     if (params.verbose) {
-        printf("Price is at index %f. Price at %d: %f. Price at %d: %f.\n",
-                answer_index, (int)floor(answer_index), price_lower,
-                (int)ceil(answer_index), price_upper);
-        printf("Interpolated price: %f\n", interpolated);
+        printf("Price at index %i: %f\n", (int)answer_index, ift[(int)answer_index]);
     } else {
-        printf("%f\n", interpolated);
+        printf("%f\n", ift[(int)answer_index]);
     }
 }
 
@@ -463,8 +457,8 @@ void computeGPU(Parameters& params, vector<double>& assetPrices, vector<double>&
     checkCufft(cufftPlan1d(&planr, N, CUFFT_Z2D, /* deprecated? */ 1));
 
     // Discretization parameters (see p.11)
-    double x_max = params.logBoundary;
-    double x_min = -params.logBoundary;
+    double x_min = params.x_min();
+    double x_max = params.x_max();
     double delta_x = (x_max - x_min) / (N - 1);
     double delta_frequency = (double)(N - 1) / (x_max - x_min) / N;
 
@@ -548,18 +542,12 @@ void computeGPU(Parameters& params, vector<double>& assetPrices, vector<double>&
     cudaFree(d_jump_ft);
 
     double answer_index = -x_min * (N - 1) / (x_max - x_min);
-    double price_lower = initialValues[(int)floor(answer_index)];
-    double price_upper = initialValues[(int)ceil(answer_index)];
-    double interpolated = price_lower * (ceil(answer_index) - answer_index) +
-                         price_upper * (answer_index - floor(answer_index));
+    assert(answer_index == (int)answer_index);
 
     if (params.verbose) {
-        printf("Price is at index %f. Price at %d: %f. Price at %d: %f.\n",
-                answer_index, (int)floor(answer_index), price_lower,
-                (int)ceil(answer_index), price_upper);
-        printf("Interpolated price: %f\n", interpolated);
+        printf("Price at index %i: %f\n", (int)answer_index, initialValues[(int)answer_index]);
     } else {
-        printf("%f\n", interpolated);
+        printf("%f\n", initialValues[(int)answer_index]);
     }
 }
 
