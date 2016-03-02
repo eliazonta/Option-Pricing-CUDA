@@ -23,6 +23,14 @@ echo "Expected Put price: 7.0639"
 ./option --payoff put --exercise american --resolution 8192 --timesteps 2000
 
 echo ""
+echo "Surkov (2009) table C.4 p.107"
+echo "Parameters EUR-F and CGMY-B p.103-104"
+echo "Reference price 4.3714972 and 4.38984331"
+params="--payoff put --exercise european --S 10 --K 10 --T 0.25
+        --CGMY --C 1.0 --G 8.8 --M 9.2 --Y 1.8 --r 0.1"
+./option $params --resolution 2048
+
+echo ""
 echo "Lippa (2013), table 2.1 p.14"
 echo "Andersen (2000) closed-form reference price: 18.0034"
 echo "Surkov (2009) reference price: 18.00362936"

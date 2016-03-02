@@ -15,6 +15,7 @@ enum JumpType
     None,
     Merton,
     Kou,
+    CGMY,
 };
 
 struct Parameters
@@ -68,6 +69,10 @@ struct Parameters
     OptionExerciseType optionExerciseType;
 
     // ---- Jump specific parameters -----
+    double CGMY_C;
+    double CGMY_G;
+    double CGMY_M;
+    double CGMY_Y;
 
     JumpType jumpType;
 

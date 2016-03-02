@@ -55,6 +55,21 @@ complex cuComplexExponential(complex x)
 }
 
 __host__ __device__ static __inline__
+complex cuComplexPower(complex base, complex exponent)
+{
+    double a = cuCreal(base);
+    double b = cuCimag(base);
+    double c = cuCreal(exponent);
+    double d = cuCimag(exponent);
+    double r = cuCabs(base);
+    double theta = atan2(b, a);
+
+    double scalar = pow(r, c) * exp(-theta * d);
+    double angle = d * log(r) + c * theta;
+    return makeComplex(scalar * cos(angle), scalar * sin(angle));
+}
+
+__host__ __device__ static __inline__
 complex cuComplexScalarMult(double scalar, complex x)
 {
     double a = cuCreal(x);
@@ -147,7 +162,7 @@ void prepareJumpModelCharacteristic(
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
-    // Frequency (see p.11 for discretization).
+    // Frequency (see Lippa (2013) p.11 for discretization).
     double m;
     if (idx <= N / 2) {
         m = idx;
@@ -156,7 +171,7 @@ void prepareJumpModelCharacteristic(
     }
     double k = delta_frequency * m;
 
-    // Calculate Ψ (psi) (2.14)
+    // Calculate Ψ (psi) (Lippa (2013) 2.14)
     // The dividend is shown on p.13
     // Equation slightly simplified to save a few operations.
     // TODO: Continuous dividend is too specific, there's more interpretations (see thesis).
@@ -175,6 +190,36 @@ void prepareJumpModelCharacteristic(
 }
 
 __global__
+void prepareCGMYCharacteristic(
+        complex* characteristic,
+        int N, double delta_frequency,
+        double C, double G, double M, double Y,
+        double gamma /* Γ(-Y), do it on the CPU */)
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    // Frequency (see Lippa (2013) p.11 for discretization).
+    double m;
+    if (idx <= N / 2) {
+        m = idx;
+    } else {
+        m = idx - N;
+    }
+    double k = delta_frequency * m;
+    double w = 2 * M_PI * k;
+
+    // See Lippa (2013) p.17 and Surkov (2009) p.26
+    // Originally from Carr (2002) p.313
+    // Note that the equation in those papers use the symbol ω
+    // instead of k for the frequency.
+    complex MY = cuComplexPower(makeComplex(M, -w), makeComplex(Y, 0));
+    complex MG = cuComplexPower(makeComplex(G, w), makeComplex(Y, 0));
+    characteristic[idx] = cuComplexScalarMult(C * gamma,
+            cuCadd(makeComplex(-pow(M, Y) - pow(G, Y), 0),
+                   cuCadd(MY, MG)));
+}
+
+__global__
 void solveODE(complex* ft,
               complex* characteristic,  // psi
               double from_time,         // τ_l (T - t_l)
@@ -187,7 +232,7 @@ void solveODE(complex* ft,
 
     complex psi = characteristic[idx];
 
-    // Solution to ODE (2.27)
+    // Solution to ODE (Lippa (2013) 2.27)
     double delta_tau = to_time - from_time;
     complex exponent = cuComplexScalarMult(delta_tau, psi);
     complex exponential = cuComplexExponential(exponent);
@@ -423,31 +468,39 @@ void computeGPU(Parameters& params, vector<double>& assetPrices, vector<double>&
     double delta_x = (x_max - x_min) / (N - 1);
     double delta_frequency = (double)(N - 1) / (x_max - x_min) / N;
 
-    // Jump function
+    // Characteristic Ψ (psi) and Jump function
     // TODO: I think we're fine with just N/2 + 1 of these.
-    complex *d_jump_ft = NULL;
-    if (params.jumpType != None) {
-        checkCuda(cudaMalloc((void**)&d_jump_ft, sizeof(complex) * N));
-
-        if (params.jumpType == Merton) {
-            prepareMertonJumpFT<<<max(N / MAX_BLOCK_SIZE, 1), min(N, MAX_BLOCK_SIZE)>>>(
-                    d_jump_ft, delta_frequency, N,
-                    params.mertonNormalStdev, params.driftRate);
-        } else if (params.jumpType == Kou) {
-            prepareKouJumpFT<<<max(N / MAX_BLOCK_SIZE, 1), min(N, MAX_BLOCK_SIZE)>>>(
-                    d_jump_ft, delta_frequency, N,
-                    params.kouUpJumpProbability, params.kouUpRate, params.kouDownRate);
-        }
-    }
-
-    // Calculate Ψ (psi) (2.14)
     complex *d_characteristic = NULL;
     checkCuda(cudaMalloc((void**)&d_characteristic, sizeof(complex) * N));
-    prepareJumpModelCharacteristic<<<max(N / MAX_BLOCK_SIZE, 1), min(N, MAX_BLOCK_SIZE)>>>(
-            d_characteristic, d_jump_ft,
-            params.riskFreeRate, params.dividendRate,
-            params.volatility, params.jumpMean, params.kappa(),
-            delta_frequency, N);
+    complex *d_jump_ft = NULL;
+
+    if (params.jumpType == CGMY) {
+        prepareCGMYCharacteristic<<<max(N / MAX_BLOCK_SIZE, 1), min(N, MAX_BLOCK_SIZE)>>>(
+                d_characteristic,
+                N, delta_frequency,
+                params.CGMY_C, params.CGMY_G, params.CGMY_M, params.CGMY_Y,
+                tgamma(-params.CGMY_Y));
+    } else {
+        prepareJumpModelCharacteristic<<<max(N / MAX_BLOCK_SIZE, 1), min(N, MAX_BLOCK_SIZE)>>>(
+                d_characteristic, d_jump_ft,
+                params.riskFreeRate, params.dividendRate,
+                params.volatility, params.jumpMean, params.kappa(),
+                delta_frequency, N);
+
+        if (params.jumpType != None) {
+            checkCuda(cudaMalloc((void**)&d_jump_ft, sizeof(complex) * N));
+
+            if (params.jumpType == Merton) {
+                prepareMertonJumpFT<<<max(N / MAX_BLOCK_SIZE, 1), min(N, MAX_BLOCK_SIZE)>>>(
+                        d_jump_ft, delta_frequency, N,
+                        params.mertonNormalStdev, params.driftRate);
+            } else if (params.jumpType == Kou) {
+                prepareKouJumpFT<<<max(N / MAX_BLOCK_SIZE, 1), min(N, MAX_BLOCK_SIZE)>>>(
+                        d_jump_ft, delta_frequency, N,
+                        params.kouUpJumpProbability, params.kouUpRate, params.kouDownRate);
+            }
+        }
+    }
 
     for (int i = 0; i < params.timesteps; i++) {
         double from_time = (double)i / params.timesteps * params.expiryTime;
@@ -528,6 +581,14 @@ int main(int argc, char** argv)
             {"eta1",  required_argument, 0, '1'},
             {"eta2",  required_argument, 0, '2'},
             {"gamma",  required_argument, 0, 'y'},
+            {"verbose",  no_argument, 0, 'v'},
+
+            {"CGMY",  no_argument, 0, '4'},
+            {"C",  required_argument, 0, 'C'},
+            {"G",  required_argument, 0, 'G'},
+            {"M",  required_argument, 0, 'M'},
+            {"Y",  required_argument, 0, 'Y'},
+
             {"S",  required_argument, 0, 'S'},
             {"K",  required_argument, 0, 'K'},
             {"r",  required_argument, 0, 'r'},
@@ -535,7 +596,6 @@ int main(int argc, char** argv)
             {"sigma",  required_argument, 0, 'o'},
             {"resolution",  required_argument, 0, 'n'},
             {"timesteps",  required_argument, 0, 't'},
-            {"verbose",  no_argument, 0, 'v'},
             {0, 0, 0, 0}
         };
 
@@ -581,6 +641,21 @@ int main(int argc, char** argv)
                 break;
             case '2':
                 params.kouDownRate = atof(optarg);
+                break;
+            case '4':
+                params.jumpType = CGMY;
+                break;
+            case 'C':
+                params.CGMY_C = atof(optarg);
+                break;
+            case 'G':
+                params.CGMY_G = atof(optarg);
+                break;
+            case 'M':
+                params.CGMY_M = atof(optarg);
+                break;
+            case 'Y':
+                params.CGMY_Y = atof(optarg);
                 break;
             case 'y':
                 params.mertonNormalStdev = atof(optarg);
