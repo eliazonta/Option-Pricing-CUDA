@@ -517,8 +517,10 @@ void computeGPU(Parameters& params, vector<double>& assetPrices, vector<double>&
         // any values in the second half at all! They don't use the second half
         // of the array either to compute the inverse fourier transform.
         // See http://www.fftw.org/doc/The-1d-Real_002ddata-DFT.html
-        int ode_size = N / 2 + 1;
-        solveODE<<<max(ode_size / MAX_BLOCK_SIZE, 1), min(ode_size, MAX_BLOCK_SIZE)>>>(
+        int fourier_size = N / 2 + 1;
+        int fourier_block_count = (int)ceil((double)fourier_size / MAX_BLOCK_SIZE);
+        int fourier_block_size = min(fourier_size, MAX_BLOCK_SIZE);
+        solveODE<<<fourier_block_count, fourier_block_size>>>(
                 d_ft, d_characteristic, from_time, to_time);
 
         // Reverse transform
