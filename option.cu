@@ -85,19 +85,39 @@ void normalize(double* ft, int length)
     ft[idx] /= length;
 }
 
+__host__ __device__ static __inline__
+double earlyExercise(double optionValue, double startPrice, double strikePrice,
+        double x, OptionPayoffType type)
+{
+    double assetPrice = startPrice * exp(x);
+    if (type == Call) {
+        return max(optionValue, max(assetPrice - strikePrice, 0.0));
+    } else {
+        return max(optionValue, max(strikePrice - assetPrice, 0.0));
+    }
+}
+
 __global__
 // TODO: Need better argument names for the last two...
-void earlyExercise(double* ft, double startPrice, double strikePrice,
+void earlyExercise(double* optionValues, double startPrice, double strikePrice,
                    double x_min, double delta_x,
                    OptionPayoffType type)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    double assetPrice = startPrice * exp(x_min + idx * delta_x);
-    if (type == Call) {
-        ft[idx] = max(ft[idx], max(assetPrice - strikePrice, 0.0));
-    } else {
-        ft[idx] = max(ft[idx], max(strikePrice - assetPrice, 0.0));
-    }
+    optionValues[idx] = earlyExercise(optionValues[idx], startPrice, strikePrice,
+            x_min + idx * delta_x, type);
+}
+
+__host__ __device__ static __inline__
+complex mertonJumpFT(double k, double mertonNormalStdev, double driftRate)
+{
+    // See Lippa (2013) p.13
+    double real = M_PI * k * mertonNormalStdev;
+    real = -2 * real * real;
+    double imag = -2 * M_PI * k * driftRate;
+    complex exponent = makeComplex(real, imag);
+
+    return cuComplexExponential(exponent);
 }
 
 // Fourier transform of the Merton jump function.
@@ -116,13 +136,22 @@ void prepareMertonJumpFT(complex* jump_ft, double delta_frequency,
     }
     double k = delta_frequency * m;
 
-    // See Lippa (2013) p.13
-    double real = M_PI * k * mertonNormalStdev;
-    real = -2 * real * real;
-    double imag = -2 * M_PI * k * driftRate;
-    complex exponent = makeComplex(real, imag);
+    jump_ft[idx] = mertonJumpFT(k, mertonNormalStdev, driftRate);
+}
 
-    jump_ft[idx] = cuComplexExponential(exponent);
+__host__ __device__ static __inline__
+complex kouJumpFT(double k, double kouUpJumpProbability,
+        double kouUpRate, double kouDownRate)
+{
+    double p = kouUpJumpProbability;
+
+    // See Lippa (2013) p.54
+    complex up = cuCdiv(makeComplex(p, 0),
+            makeComplex(1, 2 * M_PI * k / kouUpRate));
+    complex down = cuCdiv(makeComplex(1 - p, 0),
+            makeComplex(1, -2 * M_PI * k / kouDownRate));
+
+    return cuCadd(up, down);
 }
 
 // Fourier transform of the Kou jump function
@@ -133,8 +162,6 @@ void prepareKouJumpFT(complex* jump_ft, double delta_frequency,
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
-    double p = kouUpJumpProbability;
-
     // Frequency (see p.11 for discretization).
     double m;
     if (idx <= N / 2) {
@@ -144,13 +171,29 @@ void prepareKouJumpFT(complex* jump_ft, double delta_frequency,
     }
     double k = delta_frequency * m;
 
-    // See Lippa (2013) p.54
-    complex up = cuCdiv(makeComplex(p, 0),
-            makeComplex(1, 2 * M_PI * k / kouUpRate));
-    complex down = cuCdiv(makeComplex(1 - p, 0),
-            makeComplex(1, -2 * M_PI * k / kouDownRate));
+    jump_ft[idx] = kouJumpFT(k, kouUpJumpProbability, kouUpRate, kouDownRate);
+}
 
-    jump_ft[idx] = cuCadd(up, down);
+__host__ __device__ static __inline__
+complex jumpModelCharacteristic(double k, complex jump_ft,
+        double riskFreeRate, double dividend,
+        double volatility, double jumpMean,
+        double kappa)
+{
+    // Calculate Ψ (psi) (Lippa (2013) 2.14)
+    // The dividend is shown on p.13
+    // Equation slightly simplified to save a few operations.
+    // TODO: Continuous dividend is too specific, there's more interpretations (see thesis).
+    double fst_term = volatility * M_PI * k;
+    complex psi = makeComplex(
+            (-2.0 * fst_term * fst_term) - (riskFreeRate + jumpMean),
+            (riskFreeRate - dividend - jumpMean * kappa - volatility * volatility / 2.0) *
+                      (2 * M_PI * k));
+
+    // Jump component.
+    psi = cuCadd(psi, cuComplexScalarMult(jumpMean, cuConj(jump_ft)));
+
+    return psi;
 }
 
 __global__
@@ -172,22 +215,32 @@ void prepareJumpModelCharacteristic(
     }
     double k = delta_frequency * m;
 
-    // Calculate Ψ (psi) (Lippa (2013) 2.14)
-    // The dividend is shown on p.13
-    // Equation slightly simplified to save a few operations.
-    // TODO: Continuous dividend is too specific, there's more interpretations (see thesis).
-    double fst_term = volatility * M_PI * k;
-    complex psi = makeComplex(
-            (-2.0 * fst_term * fst_term) - (riskFreeRate + jumpMean),
-            (riskFreeRate - dividend - jumpMean * kappa - volatility * volatility / 2.0) *
-                      (2 * M_PI * k));
-
-    // Jump component.
-    if (jump_ft) {
-        psi = cuCadd(psi, cuComplexScalarMult(jumpMean, cuConj(jump_ft[idx])));
+    complex jumpTerm;
+    if (jump_ft)  {
+        jumpTerm = jump_ft[idx];
+    } else {
+        jumpTerm = makeComplex(0, 0);
     }
 
-    characteristic[idx] = psi;
+    characteristic[idx] = jumpModelCharacteristic(k, jumpTerm,
+            riskFreeRate, dividend, volatility, jumpMean, kappa);
+}
+
+__host__ __device__ static __inline__
+complex CGMYCharacteristic(double k,
+        double C, double G, double M, double Y,
+        double gamma /* Γ(-Y), do it on the CPU */)
+{
+    double w = 2 * M_PI * k;
+
+    // See Lippa (2013) p.17 and Surkov (2009) p.26
+    // Originally from Carr (2002) p.313
+    // Note that the equation in those papers use the symbol ω
+    // instead of k for the frequency.
+    complex MY = cuComplexPower(makeComplex(M, -w), makeComplex(Y, 0));
+    complex MG = cuComplexPower(makeComplex(G, w), makeComplex(Y, 0));
+    return cuComplexScalarMult(C * gamma,
+            cuCadd(makeComplex(-pow(M, Y) - pow(G, Y), 0), cuCadd(MY, MG)));
 }
 
 __global__
@@ -207,17 +260,19 @@ void prepareCGMYCharacteristic(
         m = idx - N;
     }
     double k = delta_frequency * m;
-    double w = 2 * M_PI * k;
 
-    // See Lippa (2013) p.17 and Surkov (2009) p.26
-    // Originally from Carr (2002) p.313
-    // Note that the equation in those papers use the symbol ω
-    // instead of k for the frequency.
-    complex MY = cuComplexPower(makeComplex(M, -w), makeComplex(Y, 0));
-    complex MG = cuComplexPower(makeComplex(G, w), makeComplex(Y, 0));
-    characteristic[idx] = cuComplexScalarMult(C * gamma,
-            cuCadd(makeComplex(-pow(M, Y) - pow(G, Y), 0),
-                   cuCadd(MY, MG)));
+    characteristic[idx] = CGMYCharacteristic(k, C, G, M, Y, gamma);
+}
+
+__host__ __device__ static __inline__
+complex solveODE(complex ft, complex psi, double from_time, double to_time)
+{
+    // Solution to ODE (Lippa (2013) 2.27)
+    double delta_tau = to_time - from_time;
+    complex exponent = cuComplexScalarMult(delta_tau, psi);
+    complex exponential = cuComplexExponential(exponent);
+
+    return cuCmul(ft, exponential);
 }
 
 __global__
@@ -233,14 +288,7 @@ void solveODE(complex* ft,
 
     complex psi = characteristic[idx];
 
-    // Solution to ODE (Lippa (2013) 2.27)
-    double delta_tau = to_time - from_time;
-    complex exponent = cuComplexScalarMult(delta_tau, psi);
-    complex exponential = cuComplexExponential(exponent);
-
-    complex new_value = cuCmul(old_value, exponential);
-
-    ft[idx] = new_value;
+    ft[idx] = solveODE(old_value, psi, from_time, to_time);
 }
 
 vector<double> assetPricesAtPayoff(Parameters& prms)
@@ -326,62 +374,79 @@ void computeCPU(Parameters& params, vector<double>& assetPrices, vector<double>&
     vector<double> optionValues = initialValues;
 
     // Discretization parameters (see p.11)
-    double x_max = params.x_max();
     double x_min = params.x_min();
+    double x_max = params.x_max();
+    double delta_x = (x_max - x_min) / (N - 1);
     double delta_frequency = (double)(N - 1) / (x_max - x_min) / N;
 
-    double from_time = 0.0f;
-    double to_time = params.expiryTime;
-    double riskFreeRate = params.riskFreeRate;
-    double volatility = params.volatility;
-    double jumpMean = params.jumpMean;
-    double kappa = params.kappa();
+    // Characteristic Ψ (psi) and Jump function
+    // TODO: I think we're fine with just N/2 + 1 of these.
+    vector<complex> characteristic(N);
+    for (int i = 0; i < N; i++) {
+        // Frequency (see Lippa (2013) p.11 for discretization).
+        double m;
+        if (i <= N / 2) {
+            m = i;
+        } else {
+            m = i - N;
+        }
+        double k = delta_frequency * m;
+
+        if (params.jumpType == CGMY) {
+            characteristic[i] = CGMYCharacteristic(k,
+                    params.CGMY_C, params.CGMY_G, params.CGMY_M, params.CGMY_Y,
+                    tgamma(-params.CGMY_Y));
+        } else {
+            complex jumpFT = makeComplex(0, 0);
+            if (params.jumpType != None) {
+                if (params.jumpType == Merton) {
+                    jumpFT = mertonJumpFT(k, params.mertonNormalStdev, params.driftRate);
+                } else if (params.jumpType == Kou) {
+                    jumpFT = kouJumpFT(k, params.kouUpJumpProbability,
+                            params.kouUpRate, params.kouDownRate);
+                }
+            }
+
+            characteristic[i] = jumpModelCharacteristic(k, jumpFT,
+                    params.riskFreeRate, params.dividendRate,
+                    params.volatility, params.jumpMean, params.kappa());
+        }
+    }
 
     // Forward transform
     vector<complex> ft(N);
 
-    // FFTW
+    // FFTW execution
     FFTWProxy proxy(N, &optionValues[0], (genfloat2 *)(&ft[0]));
-    proxy.execForward();
 
-    for (int idx = 0; idx < ft.size(); idx++) {
-        complex old_value = ft[idx];
+    for (int i = 0; i < params.timesteps; i++) {
+        double from_time = (double)i / params.timesteps * params.expiryTime;
+        double to_time = (double)(i + 1) / params.timesteps * params.expiryTime;
 
-        // Frequency (see p.11 for discretization).
-        double m;
-        if (idx <= N / 2) {
-            m = idx;
-        } else {
-            m = idx - N;
+        // Forward transform
+        proxy.execForward();
+
+        // Solve ODE
+        for (int j = 0; j < ft.size(); j++) {
+            ft[j] = solveODE(ft[j], characteristic[j], from_time, to_time);
         }
-        double k = delta_frequency * m;
 
-        // Calculate Ψ (psi) (2.14)
-        // Equation slightly simplified to save a few operations.
-        double fst_term = volatility * M_PI * k;
-        double psi_real = (-2.0 * fst_term * fst_term) - (riskFreeRate + jumpMean);
-        double psi_imag = (riskFreeRate - jumpMean * kappa - volatility * volatility / 2.0) *
-                          (2 * M_PI * k);
+        // Reverse transform
+        proxy.execInverse();
 
-        // TODO: jump component.
+        for (int idx = 0; idx < optionValues.size(); idx++) {
+            // Scale, fftw doesn't do it for you.
+            optionValues[idx] /= N;
+        }
 
-        // Solution to ODE (2.27)
-        double delta_tau = to_time - from_time;
-        complex exponent =
-            makeComplex(psi_real * delta_tau, psi_imag * delta_tau);
-        complex exponential = cuComplexExponential(exponent);
-
-        complex new_value = cuCmul(old_value, exponential);
-
-        ft[idx] = new_value;
-    }
-    //printComplexArray(ft);
-
-    // Inverse transform
-    proxy.execInverse();
-    for (int idx = 0; idx < optionValues.size(); idx++) {
-        // Scale.
-        optionValues[idx] /= N;
+        // Early exercise
+        if (params.optionExerciseType == American) {
+            for (int j = 0; j < ft.size(); j++) {
+                optionValues[j] = earlyExercise(optionValues[j],
+                        params.startPrice, params.strikePrice,
+                        x_min + j * delta_x, params.optionPayoffType);
+            }
+        }
     }
 
     double answer_index = -x_min * (N - 1) / (x_max - x_min);
@@ -434,6 +499,7 @@ void computeGPU(Parameters& params, vector<double>& assetPrices, vector<double>&
                 N, delta_frequency,
                 params.CGMY_C, params.CGMY_G, params.CGMY_M, params.CGMY_Y,
                 tgamma(-params.CGMY_Y));
+        checkCuda(cudaPeekAtLastError());
     } else {
         if (params.jumpType != None) {
             checkCuda(cudaMalloc((void**)&d_jump_ft, sizeof(complex) * N));
@@ -442,10 +508,12 @@ void computeGPU(Parameters& params, vector<double>& assetPrices, vector<double>&
                 prepareMertonJumpFT<<<max(N / MAX_BLOCK_SIZE, 1), min(N, MAX_BLOCK_SIZE)>>>(
                         d_jump_ft, delta_frequency, N,
                         params.mertonNormalStdev, params.driftRate);
+                checkCuda(cudaPeekAtLastError());
             } else if (params.jumpType == Kou) {
                 prepareKouJumpFT<<<max(N / MAX_BLOCK_SIZE, 1), min(N, MAX_BLOCK_SIZE)>>>(
                         d_jump_ft, delta_frequency, N,
                         params.kouUpJumpProbability, params.kouUpRate, params.kouDownRate);
+                checkCuda(cudaPeekAtLastError());
             }
         }
 
@@ -454,6 +522,7 @@ void computeGPU(Parameters& params, vector<double>& assetPrices, vector<double>&
                 params.riskFreeRate, params.dividendRate,
                 params.volatility, params.jumpMean, params.kappa(),
                 delta_frequency, N);
+        checkCuda(cudaPeekAtLastError());
     }
 
     for (int i = 0; i < params.timesteps; i++) {
@@ -476,10 +545,12 @@ void computeGPU(Parameters& params, vector<double>& assetPrices, vector<double>&
         int fourier_block_size = min(fourier_size, MAX_BLOCK_SIZE);
         solveODE<<<fourier_block_count, fourier_block_size>>>(
                 d_ft, d_characteristic, from_time, to_time);
+        checkCuda(cudaPeekAtLastError());
 
         // Reverse transform
         checkCufft(cufftExecZ2D(planr, d_ft, d_prices));
         normalize<<<max(N / MAX_BLOCK_SIZE, 1), min(N, MAX_BLOCK_SIZE)>>>(d_prices, N);
+        checkCuda(cudaPeekAtLastError());
 
         // Consider early exercise for American options. This is the same technique
         // as option pricing using dynamic programming: at each timestep, set the
@@ -488,6 +559,7 @@ void computeGPU(Parameters& params, vector<double>& assetPrices, vector<double>&
             earlyExercise<<<max(N / MAX_BLOCK_SIZE, 1), min(N, MAX_BLOCK_SIZE)>>>(
                     d_prices, params.startPrice, params.strikePrice,
                     x_min, delta_x, params.optionPayoffType);
+            checkCuda(cudaPeekAtLastError());
         }
     }
 
