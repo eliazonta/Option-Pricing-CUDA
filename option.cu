@@ -16,6 +16,8 @@
 // For quick testing of floats only, otherwise this is obviously a terrible idea.
 #define double float
 #define complex cufftComplex
+
+// See definitions in usr/local/cuda/include/cuComplex.h
 #define cuCreal cuCrealf
 #define cuCimag cuCimagf
 #define cuCadd cuCaddf
@@ -235,6 +237,8 @@ complex CGMYCharacteristic(double k,
         double gamma /* Γ(-Y), do it on the CPU */)
 {
     double w = 2 * M_PI * k;
+
+    // TODO: When Y == 0, CGMY == Variance Gamma (Wang, Wan, Forsyth (2007) p. 18)
 
     // See Lippa (2013) p.17 and Surkov (2009) p.26
     // Originally from Carr (2002) p.313
