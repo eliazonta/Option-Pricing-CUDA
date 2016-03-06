@@ -123,3 +123,47 @@ void cudaCheck(bool debug)
 
     helloWorld();
 }
+
+/* Slow FFT for testing if needed.
+vector<complex> dft(vector<double>& in)
+{
+    vector<complex> out(in.size());
+
+    for (int k = 0; k < out.size(); k++) {
+        out[k] = makeComplex(0, 0);
+
+        for (int n = 0; n < in.size(); n++) {
+            complex exponent = makeComplex(0, -2.0f * M_PI * k * n / in.size());
+            out[k] = cuCadd(out[k], cuComplexScalarMult(in[n], cuComplexExponential(exponent)));
+        }
+    }
+
+    return out;
+}
+
+vector<complex> idft_complex(vector<complex>& in)
+{
+    vector<complex> out(in.size());
+
+    for (int k = 0; k < out.size(); k++) {
+        out[k] = makeComplex(0, 0);
+
+        for (int n = 0; n < in.size(); n++) {
+            complex exponent = makeComplex(0, 2.0f * M_PI * k * n / in.size());
+            out[k] = cuCadd(out[k], cuCmul(in[n], cuComplexExponential(exponent)));
+        }
+    }
+
+    return out;
+}
+
+vector<double> idft(vector<complex>& in)
+{
+    vector<complex> ift = idft_complex(in);
+    vector<double> out(ift.size());
+    for (int i = 0; i < ift.size(); i++) {
+        out[i] = cuCreal(ift[i]);
+    }
+    return out;
+}
+*/

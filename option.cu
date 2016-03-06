@@ -7,6 +7,7 @@
 #include <cufft.h>
 
 #include "parameters.h"
+#include "fftwproxy.h"
 #include "utils.h"
 
 #ifdef USE_FLOAT
@@ -306,55 +307,6 @@ void printComplexArray(vector<complex> xs)
     printf("\n");
 }
 
-vector<complex> dft(vector<double>& in)
-{
-    vector<complex> out(in.size());
-
-    for (int k = 0; k < out.size(); k++) {
-        out[k] = makeComplex(0, 0);
-
-        for (int n = 0; n < in.size(); n++) {
-            complex exponent = makeComplex(0, -2.0f * M_PI * k * n / in.size());
-            out[k] = cuCadd(out[k], cuComplexScalarMult(in[n], cuComplexExponential(exponent)));
-        }
-    }
-
-    return out;
-}
-
-vector<complex> idft_complex(vector<complex>& in)
-{
-    vector<complex> out(in.size());
-
-    for (int k = 0; k < out.size(); k++) {
-        out[k] = makeComplex(0, 0);
-
-        for (int n = 0; n < in.size(); n++) {
-            complex exponent = makeComplex(0, 2.0f * M_PI * k * n / in.size());
-            out[k] = cuCadd(out[k], cuCmul(in[n], cuComplexExponential(exponent)));
-        }
-
-        out[k] = cuComplexScalarMult(1.0 / out.size(), out[k]);
-    }
-
-    /*
-    printComplexArray(out);
-    printf("\n");
-    */
-
-    return out;
-}
-
-vector<double> idft(vector<complex>& in)
-{
-    vector<complex> ift = idft_complex(in);
-    vector<double> out(ift.size());
-    for (int i = 0; i < ift.size(); i++) {
-        out[i] = cuCreal(ift[i]);
-    }
-    return out;
-}
-
 void printPrices(vector<double>& prices) {
     int first_negative = -1;
     for (int i = 0; i < prices.size(); i++) {
@@ -367,9 +319,11 @@ void printPrices(vector<double>& prices) {
     printf("First negative number at %d.\n", first_negative);
 }
 
-void computeCPU(Parameters& params, vector<double>& assetPrices, vector<double>& optionValues)
+void computeCPU(Parameters& params, vector<double>& assetPrices, vector<double>& initialValues)
 {
     int N = params.resolution;
+
+    vector<double> optionValues = initialValues;
 
     // Discretization parameters (see p.11)
     double x_max = params.x_max();
@@ -384,8 +338,11 @@ void computeCPU(Parameters& params, vector<double>& assetPrices, vector<double>&
     double kappa = params.kappa();
 
     // Forward transform
-    vector<complex> ft = dft(optionValues);
-    vector<complex> ft2(N);
+    vector<complex> ft(N);
+
+    // FFTW
+    FFTWProxy proxy(N, &optionValues[0], (genfloat2 *)(&ft[0]));
+    proxy.execForward();
 
     for (int idx = 0; idx < ft.size(); idx++) {
         complex old_value = ft[idx];
@@ -416,21 +373,24 @@ void computeCPU(Parameters& params, vector<double>& assetPrices, vector<double>&
 
         complex new_value = cuCmul(old_value, exponential);
 
-        ft2[idx] = new_value;
+        ft[idx] = new_value;
     }
+    //printComplexArray(ft);
 
     // Inverse transform
-    vector<double> ift = idft(ft2);
-
-    // printPrices(ift);
+    proxy.execInverse();
+    for (int idx = 0; idx < optionValues.size(); idx++) {
+        // Scale.
+        optionValues[idx] /= N;
+    }
 
     double answer_index = -x_min * (N - 1) / (x_max - x_min);
     assert(answer_index == (int)answer_index);
 
     if (params.verbose) {
-        printf("Price at index %i: %f\n", (int)answer_index, ift[(int)answer_index]);
+        printf("Price at index %i: %f\n", (int)answer_index, optionValues[(int)answer_index]);
     } else {
-        printf("%f\n", ift[(int)answer_index]);
+        printf("%f\n", optionValues[(int)answer_index]);
     }
 }
 
@@ -556,6 +516,7 @@ int main(int argc, char** argv)
     assert(sizeof(complex) == 2 * sizeof(double));
 
     Parameters params;
+    bool useCPU = false;
 
     // Parse arguments
     while (true) {
@@ -565,6 +526,7 @@ int main(int argc, char** argv)
             {"dividend",  required_argument, 0, 'q'},
             {"debug",  no_argument, 0, 'd'},
             {"verbose",  no_argument, 0, 'v'},
+            {"cpu",  no_argument, 0, 'c'},
             // General parameters
             {"S",  required_argument, 0, 'S'},
             {"K",  required_argument, 0, 'K'},
@@ -690,6 +652,9 @@ int main(int argc, char** argv)
             case 'v':
                 params.verbose = true;
                 break;
+            case 'c':
+                useCPU = true;
+                break;
             case '?':
                 break;
             default:
@@ -706,10 +671,17 @@ int main(int argc, char** argv)
     vector<double> assetPrices = assetPricesAtPayoff(params);
     vector<double> optionValues = optionValuesAtPayoff(params, assetPrices);
 
-    if (params.verbose) {
-        printf("\nComputing GPU results...\n");
+    if (useCPU) {
+        if (params.verbose) {
+            printf("\nComputing CPU results...\n");
+        }
+        computeCPU(params, assetPrices, optionValues);
+    } else {
+        if (params.verbose) {
+            printf("\nComputing GPU results...\n");
+        }
+        computeGPU(params, assetPrices, optionValues);
     }
-    computeGPU(params, assetPrices, optionValues);
 
     return EXIT_SUCCESS;
 }
