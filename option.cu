@@ -394,10 +394,10 @@ void computeCPU(Parameters& params, vector<double>& assetPrices, vector<double>&
     }
 }
 
-void computeGPU(Parameters& params, vector<double>& assetPrices, vector<double>& optionValues)
+void computeGPU(Parameters& params, vector<double>& assetPrices, vector<double>& initialValues)
 {
     // Option values at time t = 0
-    vector<double> initialValues(optionValues.size());
+    vector<double> optionValues = initialValues;
 
     int N = params.resolution;
 
@@ -491,7 +491,7 @@ void computeGPU(Parameters& params, vector<double>& assetPrices, vector<double>&
         }
     }
 
-    checkCuda(cudaMemcpy(&initialValues[0], d_prices, sizeof(double) * N,
+    checkCuda(cudaMemcpy(&optionValues[0], d_prices, sizeof(double) * N,
                          cudaMemcpyDeviceToHost));
 
     // Destroy the cuFFT plan.
@@ -505,9 +505,9 @@ void computeGPU(Parameters& params, vector<double>& assetPrices, vector<double>&
     assert(answer_index == (int)answer_index);
 
     if (params.verbose) {
-        printf("Price at index %i: %f\n", (int)answer_index, initialValues[(int)answer_index]);
+        printf("Price at index %i: %f\n", (int)answer_index, optionValues[(int)answer_index]);
     } else {
-        printf("%f\n", initialValues[(int)answer_index]);
+        printf("%f\n", optionValues[(int)answer_index]);
     }
 }
 
