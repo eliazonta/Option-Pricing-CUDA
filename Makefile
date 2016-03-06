@@ -15,7 +15,7 @@ intel: option_ocelot.o $(OBJS)
 	g++ -o option option_ocelot.o $(OBJS) `OcelotConfig -l` -lcufft
 
 utils.o: utils.cu
-	nvcc -g -c utils.cu
+	nvcc -g -c -std=c++11 utils.cu
 
 parameters.o: parameters.cpp
 	gcc -g -c parameters.cpp
@@ -24,13 +24,13 @@ fftwproxy.o: fftwproxy.cpp
 	gcc -g -c fftwproxy.cpp
 
 option.o: option.cu
-	nvcc -g -c option.cu
+	nvcc -g -c -std=c++11 option.cu
 
 option_old.o: option.cu
-	nvcc -g -c option.cu -D USE_FLOAT
+	nvcc -g -c -std=c++11 option.cu -D USE_FLOAT
 
 option_ocelot.o: option.cu
-	nvcc -g -c option.cu -arch=sm_20
+	nvcc -g -c -std=c++11 option.cu -arch=sm_20
 
 clean:
 	rm -rf *.o option

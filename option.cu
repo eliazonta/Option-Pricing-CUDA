@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <chrono>
 #include <getopt.h>
 #include <math_constants.h>
 #include <stdio.h>
@@ -45,6 +46,8 @@
 #endif
 
 using namespace std;
+
+typedef std::chrono::high_resolution_clock Clock;
 
 __host__ __device__ static __inline__
 complex cuComplexExponential(complex x)
@@ -733,16 +736,25 @@ int main(int argc, char** argv)
     vector<double> assetPrices = assetPricesAtPayoff(params);
     vector<double> optionValues = optionValuesAtPayoff(params, assetPrices);
 
+    // http://stackoverflow.com/questions/5521146/what-is-the-best-most-accurate-timer-in-c
     if (useCPU) {
         if (params.verbose) {
             printf("\nComputing CPU results...\n");
         }
+        auto start = Clock::now();
         computeCPU(params, assetPrices, optionValues);
+        auto end = Clock::now();
+        chrono::duration<double, milli> fp_ms = end - start;
+        printf("Computed with CPU in %f ms.\n", fp_ms.count());
     } else {
         if (params.verbose) {
             printf("\nComputing GPU results...\n");
         }
+        auto start = Clock::now();
         computeGPU(params, assetPrices, optionValues);
+        auto end = Clock::now();
+        chrono::duration<double, milli> fp_ms = end - start;
+        printf("Computed with GPU in %f ms.\n", fp_ms.count());
     }
 
     return EXIT_SUCCESS;
