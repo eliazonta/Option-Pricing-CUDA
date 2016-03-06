@@ -15,14 +15,14 @@
 // CUFFT_NO_WORKSPACE = 13 // No workspace has been provided prior to plan execution
 #define checkCufft(result) do {           \
     if (result != CUFFT_SUCCESS) {                      \
-        fprintf(stderr, "CUFFT at %d error: %d\n", __LINE__, result);   \
+        fprintf(stderr, "CUFFT at %d error %d: %s\n", __LINE__, result, cudaGetErrorString(cudaGetLastError()));   \
         exit(-1);                                       \
     }                                                   \
 } while(0)
 
 #define checkCuda(result) do {            \
     if (result != cudaSuccess) {                        \
-        fprintf(stderr, "CUDA at %d error: %d\n", __LINE__, result);   \
+        fprintf(stderr, "CUDA at %d error %d: %s\n", __LINE__, result, cudaGetErrorString(cudaGetLastError()));   \
         exit(-1);                                       \
     }                                                   \
 } while(0)
