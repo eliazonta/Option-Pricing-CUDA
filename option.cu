@@ -240,10 +240,10 @@ complex CGMYCharacteristic(double k,
     // Originally from Carr (2002) p.313
     // Note that the equation in those papers use the symbol ω
     // instead of k for the frequency.
-    complex MY = cuComplexPower(makeComplex(M, -w), makeComplex(Y, 0));
-    complex MG = cuComplexPower(makeComplex(G, w), makeComplex(Y, 0));
+    complex MwY = cuComplexPower(makeComplex(M, -w), makeComplex(Y, 0));
+    complex GwY = cuComplexPower(makeComplex(G, w), makeComplex(Y, 0));
     return cuComplexScalarMult(C * gamma,
-            cuCadd(makeComplex(-pow(M, Y) - pow(G, Y), 0), cuCadd(MY, MG)));
+            cuCadd(makeComplex(-pow(M, Y) - pow(G, Y), 0), cuCadd(MwY, GwY)));
 }
 
 __global__
