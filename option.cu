@@ -297,22 +297,9 @@ vector<double> assetPricesAtPayoff(Parameters& prms)
     vector<double> out(N);
 
     // Discretization parameters (see p.11)
-    // TODO: Factor out into params?
     double x_max = prms.x_max();
     double x_min = prms.x_min();
     double delta_x = (x_max - x_min) / (N - 1);
-
-    /*
-    // Tree parameters (see p.53 of notes).
-    double u = exp(prms.volatility * sqrt(prms.timeIncrement));
-    double d = 1.0 / u;
-    double a = exp(prms.riskFreeRate * prms.timeIncrement);
-    // double p = (a - d) / (u - d);
-
-    for (int i = 0; i < N; i++) {
-        out[i] = prms.startPrice * pow(u, i) * pow(d, N - i);
-    }
-    */
 
     for (int i = 0; i < N; i++) {
         out[i] = prms.startPrice * exp(x_min + i * delta_x);
@@ -340,7 +327,11 @@ vector<double> optionValuesAtPayoff(Parameters& prms, vector<double>& assetPrice
 void printComplex(complex x) {
     double a = cuCreal(x);
     double b = cuCimag(x);
-    printf("%f + %fi", a, b);
+    if (b >= 0) {
+        printf("%f + %fi", a, b);
+    } else {
+        printf("%f - %fi", a, -b);
+    }
 }
 
 void printComplexArray(vector<complex> xs)
@@ -364,7 +355,6 @@ void printPrices(vector<double>& prices) {
         }
     }
     printf("\n");
-    printf("First negative number at %d.\n", first_negative);
 }
 
 void computeCPU(Parameters& params, vector<double>& assetPrices, vector<double>& initialValues)
