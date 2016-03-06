@@ -60,3 +60,7 @@ echo ""
 ./tests/surkov_c11.sh $1
 echo ""
 ./tests/surkov_24.sh $1
+echo ""
+./tests/wwf_2.sh $1
+echo ""
+./tests/wwf_3.sh $1
