@@ -564,21 +564,8 @@ int main(int argc, char** argv)
             {"exercise",  required_argument, 0, 'e'},
             {"dividend",  required_argument, 0, 'q'},
             {"debug",  no_argument, 0, 'd'},
-            {"mertonjumps",  no_argument, 0, 'm'},
-            {"koujumps",  no_argument, 0, 'k'},
-            {"lambda",  required_argument, 0, 'l'},
-            {"p",  required_argument, 0, '0'},
-            {"eta1",  required_argument, 0, '1'},
-            {"eta2",  required_argument, 0, '2'},
-            {"gamma",  required_argument, 0, 'y'},
             {"verbose",  no_argument, 0, 'v'},
-
-            {"CGMY",  no_argument, 0, '4'},
-            {"C",  required_argument, 0, 'C'},
-            {"G",  required_argument, 0, 'G'},
-            {"M",  required_argument, 0, 'M'},
-            {"Y",  required_argument, 0, 'Y'},
-
+            // General parameters
             {"S",  required_argument, 0, 'S'},
             {"K",  required_argument, 0, 'K'},
             {"r",  required_argument, 0, 'r'},
@@ -586,6 +573,22 @@ int main(int argc, char** argv)
             {"sigma",  required_argument, 0, 'o'},
             {"resolution",  required_argument, 0, 'n'},
             {"timesteps",  required_argument, 0, 't'},
+            // Merton Jump args
+            {"mertonjumps",  no_argument, 0, 'm'},
+            {"lambda",  required_argument, 0, 'l'},
+            {"mu",  required_argument, 0, 'u'},
+            // Kou Jump args
+            {"koujumps",  no_argument, 0, 'k'},
+            {"p",  required_argument, 0, '0'},
+            {"etaUp",  required_argument, 0, '1'},
+            {"etaDown",  required_argument, 0, '2'},
+            {"gamma",  required_argument, 0, 'y'},
+            // CGMY model
+            {"CGMY",  no_argument, 0, '4'},
+            {"C",  required_argument, 0, 'C'},
+            {"G",  required_argument, 0, 'G'},
+            {"M",  required_argument, 0, 'M'},
+            {"Y",  required_argument, 0, 'Y'},
             {0, 0, 0, 0}
         };
 
@@ -622,6 +625,9 @@ int main(int argc, char** argv)
                 break;
             case 'l':
                 params.jumpMean = atof(optarg);
+                break;
+            case 'u':
+                params.driftRate = atof(optarg);
                 break;
             case '0':
                 params.kouUpJumpProbability = atof(optarg);
