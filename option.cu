@@ -741,25 +741,24 @@ int main(int argc, char** argv)
     vector<double> optionValues = optionValuesAtPayoff(params, assetPrices);
 
     // http://stackoverflow.com/questions/5521146/what-is-the-best-most-accurate-timer-in-c
+    auto start = Clock::now();
     if (useCPU) {
         if (params.verbose) {
             printf("\nComputing CPU results...\n");
         }
-        auto start = Clock::now();
         computeCPU(params, assetPrices, optionValues);
-        auto end = Clock::now();
-        chrono::duration<double, milli> fp_ms = end - start;
-        printf("Computed with CPU in %f ms.\n", fp_ms.count());
     } else {
         if (params.verbose) {
             printf("\nComputing GPU results...\n");
         }
-        auto start = Clock::now();
         computeGPU(params, assetPrices, optionValues);
-        auto end = Clock::now();
-        chrono::duration<double, milli> fp_ms = end - start;
-        printf("Computed with GPU in %f ms.\n", fp_ms.count());
     }
+    auto end = Clock::now();
+
+    chrono::duration<double, milli> fp_ms = end - start;
+    printf("Computed with %s in %f ms (timesteps %d, resolution %d).\n",
+            useCPU ? "CPU" : "GPU",
+            fp_ms.count(), params.timesteps, params.resolution);
 
     return EXIT_SUCCESS;
 }
