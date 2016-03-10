@@ -61,6 +61,14 @@ complex cuComplexExponential(complex x)
 }
 
 __host__ __device__ static __inline__
+complex cuComplexLog(complex c)
+{
+    double x = cuCreal(c);
+    double y = cuCimag(c);
+    return makeComplex(log(sqrt(x * x + y * y)), atan2(y, x));
+}
+
+__host__ __device__ static __inline__
 complex cuComplexPower(complex base, complex exponent)
 {
     double a = cuCreal(base);
@@ -236,18 +244,37 @@ complex CGMYCharacteristic(double k,
         double C, double G, double M, double Y,
         double gamma /* Γ(-Y), do it on the CPU */)
 {
-    double w = 2 * M_PI * k;
-
-    // TODO: When Y == 0, CGMY == Variance Gamma (Wang, Wan, Forsyth (2007) p. 18)
-
-    // See Lippa (2013) p.17 and Surkov (2009) p.26
-    // Originally from Carr (2002) p.313
     // Note that the equation in those papers use the symbol ω
     // instead of k for the frequency.
-    complex MwY = cuComplexPower(makeComplex(M, -w), makeComplex(Y, 0));
-    complex GwY = cuComplexPower(makeComplex(G, w), makeComplex(Y, 0));
-    return cuComplexScalarMult(C * gamma,
-            cuCadd(makeComplex(-pow(M, Y) - pow(G, Y), 0), cuCadd(MwY, GwY)));
+    double w = 2 * M_PI * k;
+
+    // Variance Gamma and CGMY equations see Lippa (2013) p.17
+    // and Surkov (2009) p.26
+    // Originally from Carr (2002) p.313
+
+    if (Y == 0) {
+        // When Y == 0, CGMY == Variance Gamma (Wang, Wan, Forsyth (2007) p. 18)
+
+        // Note that we need to compute the parameters μ (mu), γ (gamma), σ (sigma).
+        // We solve for them by using C1 and C2.
+
+        // We obtain C1 and C2 by making the Levy Density of Variance Gamma and CGMY
+        // equal when Y == 0.
+        double C1 = (G - M) / 2.0;
+        double C2 = (G + M) / 2.0;
+        double mu = 1.0 / C;
+        double temp = C2 / C1;
+        double gamma = 2 * C / (C1 * (temp * temp - 1));
+        double sigma = sqrt(gamma / C1);
+
+        complex c = makeComplex(1 + sigma * sigma * mu * w * w / 2, -gamma * mu * w);
+        return cuComplexScalarMult(-1.0 / mu, cuComplexLog(c));
+    } else {
+        complex MwY = cuComplexPower(makeComplex(M, -w), makeComplex(Y, 0));
+        complex GwY = cuComplexPower(makeComplex(G, w), makeComplex(Y, 0));
+        return cuComplexScalarMult(C * gamma,
+                cuCadd(makeComplex(-pow(M, Y) - pow(G, Y), 0), cuCadd(MwY, GwY)));
+    }
 }
 
 __global__
