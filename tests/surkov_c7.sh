@@ -1,11 +1,11 @@
 #!/bin/bash
 
-echo "Surkov (2009) table C.5 p.107"
-echo "Parameters AMR-B MJD-C p.103-104"
-echo "Reference price 3.2412435"
-params="--payoff put --exercise american --S 100 --K 100 --T 0.25
-        --sigma 0.15 --r 0.05
-        --mertonjumps --lambda 0.1 --mertonmu -0.9 --mertongamma 0.45"
+echo "Surkov (2009) table C.7 p.108"
+echo "Parameters AMR-C and VG-B p.103-104"
+echo "Reference price 35.5301"
+params="--payoff put --exercise american --S 1369.1 --K 1200 --T 0.5616
+        --sigma 0.20722 --r 0.0541 --dividend 0.012
+        --vg --vgmu 0.50215 --vgdrift -0.22898"
 ./option $1 $params --resolution 2048 --timesteps 128
 ./option $1 $params --resolution 4096 --timesteps 512
 ./option $1 $params --resolution 8192 --timesteps 2048

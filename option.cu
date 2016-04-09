@@ -122,12 +122,12 @@ void earlyExercise(double* optionValues, double startPrice, double strikePrice,
 }
 
 __host__ __device__ static __inline__
-complex mertonJumpFT(double k, double mertonNormalStdev, double driftRate)
+complex mertonJumpFT(double k, double mertonNormalStdev, double mertonMean)
 {
     // See Lippa (2013) p.13
     double real = M_PI * k * mertonNormalStdev;
     real = -2 * real * real;
-    double imag = -2 * M_PI * k * driftRate;
+    double imag = -2 * M_PI * k * mertonMean;
     complex exponent = makeComplex(real, imag);
 
     return cuComplexExponential(exponent);
@@ -136,7 +136,7 @@ complex mertonJumpFT(double k, double mertonNormalStdev, double driftRate)
 // Fourier transform of the Merton jump function.
 __global__
 void prepareMertonJumpFT(complex* jump_ft, double delta_frequency,
-                         int N, double mertonNormalStdev, double driftRate)
+                         int N, double mertonNormalStdev, double mertonMean)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -149,7 +149,7 @@ void prepareMertonJumpFT(complex* jump_ft, double delta_frequency,
     }
     double k = delta_frequency * m;
 
-    jump_ft[idx] = mertonJumpFT(k, mertonNormalStdev, driftRate);
+    jump_ft[idx] = mertonJumpFT(k, mertonNormalStdev, mertonMean);
 }
 
 __host__ __device__ static __inline__
@@ -237,6 +237,40 @@ void prepareJumpModelCharacteristic(
 
     characteristic[idx] = jumpModelCharacteristic(k, jumpTerm,
             riskFreeRate, dividend, volatility, jumpMean, kappa);
+}
+
+__host__ __device__ static __inline__
+complex varianceGammaCharacteristic(double k,
+        double mu,      // jumpMeanInv
+        double gamma,   // vg_drift
+        double sigma    // volatilityk
+        )
+{
+    // See Surkov (2009) p.26 or Lippa (2013) p.16
+    double w = 2 * M_PI * k;
+    complex c = makeComplex(1 + sigma * sigma * mu * w * w / 2, -gamma * mu * w);
+    complex vg = cuComplexScalarMult(-1.0 / mu, cuComplexLog(c));
+    return vg;
+}
+
+__global__
+void prepareVarianceGammaCharacteristic(
+        complex* characteristic,
+        int N, double delta_frequency,
+        double jumpMeanInv, double vg_drift, double volatility)
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    // Frequency (see Lippa (2013) p.11 for discretization).
+    double m;
+    if (idx <= N / 2) {
+        m = idx;
+    } else {
+        m = idx - N;
+    }
+    double k = delta_frequency * m;
+
+    characteristic[idx] = varianceGammaCharacteristic(k, jumpMeanInv, vg_drift, volatility);
 }
 
 __host__ __device__ static __inline__
@@ -424,7 +458,7 @@ void computeCPU(Parameters& params, vector<double>& assetPrices, vector<double>&
             complex jumpFT = makeComplex(0, 0);
             if (params.jumpType != None) {
                 if (params.jumpType == Merton) {
-                    jumpFT = mertonJumpFT(k, params.mertonNormalStdev, params.driftRate);
+                    jumpFT = mertonJumpFT(k, params.mertonNormalStdev, params.mertonMean);
                 } else if (params.jumpType == Kou) {
                     jumpFT = kouJumpFT(k, params.kouUpJumpProbability,
                             params.kouUpRate, params.kouDownRate);
@@ -517,13 +551,17 @@ void computeGPU(Parameters& params, vector<double>& assetPrices, vector<double>&
     checkCuda(cudaMalloc((void**)&d_characteristic, sizeof(complex) * N));
     complex *d_jump_ft = NULL;
 
-    if (params.jumpType == CGMY) {
+    if (params.jumpType == VarianceGamma) {
+        prepareVarianceGammaCharacteristic<<<max(N / MAX_BLOCK_SIZE, 1), min(N, MAX_BLOCK_SIZE)>>>(
+                d_characteristic,
+                N, delta_frequency,
+                params.jumpMeanInverse(), params.VG_driftRate, params.volatility);
+    } else if (params.jumpType == CGMY) {
         prepareCGMYCharacteristic<<<max(N / MAX_BLOCK_SIZE, 1), min(N, MAX_BLOCK_SIZE)>>>(
                 d_characteristic,
                 N, delta_frequency,
                 params.CGMY_C, params.CGMY_G, params.CGMY_M, params.CGMY_Y,
                 tgamma(-params.CGMY_Y));
-        checkCuda(cudaPeekAtLastError());
     } else {
         if (params.jumpType != None) {
             checkCuda(cudaMalloc((void**)&d_jump_ft, sizeof(complex) * N));
@@ -531,7 +569,7 @@ void computeGPU(Parameters& params, vector<double>& assetPrices, vector<double>&
             if (params.jumpType == Merton) {
                 prepareMertonJumpFT<<<max(N / MAX_BLOCK_SIZE, 1), min(N, MAX_BLOCK_SIZE)>>>(
                         d_jump_ft, delta_frequency, N,
-                        params.mertonNormalStdev, params.driftRate);
+                        params.mertonNormalStdev, params.mertonMean);
                 checkCuda(cudaPeekAtLastError());
             } else if (params.jumpType == Kou) {
                 prepareKouJumpFT<<<max(N / MAX_BLOCK_SIZE, 1), min(N, MAX_BLOCK_SIZE)>>>(
@@ -546,8 +584,8 @@ void computeGPU(Parameters& params, vector<double>& assetPrices, vector<double>&
                 params.riskFreeRate, params.dividendRate,
                 params.volatility, params.jumpMean, params.kappa(),
                 delta_frequency, N);
-        checkCuda(cudaPeekAtLastError());
     }
+    checkCuda(cudaPeekAtLastError());
 
     for (int i = 0; i < params.timesteps; i++) {
         double from_time = (double)i / params.timesteps * params.expiryTime;
@@ -631,16 +669,21 @@ int main(int argc, char** argv)
             {"sigma",  required_argument, 0, 'o'},
             {"resolution",  required_argument, 0, 'n'},
             {"timesteps",  required_argument, 0, 't'},
+            // Jump args
+            {"lambda",  required_argument, 0, 'l'},
             // Merton Jump args
             {"mertonjumps",  no_argument, 0, 'm'},
-            {"lambda",  required_argument, 0, 'l'},
-            {"mu",  required_argument, 0, 'u'},
+            {"mertonmu",  required_argument, 0, 'u'},
+            {"mertongamma",  required_argument, 0, 'y'},
             // Kou Jump args
             {"koujumps",  no_argument, 0, 'k'},
             {"p",  required_argument, 0, '0'},
             {"etaUp",  required_argument, 0, '1'},
             {"etaDown",  required_argument, 0, '2'},
-            {"gamma",  required_argument, 0, 'y'},
+            // Variance Gamma model
+            {"vg",  no_argument, 0, '5'},
+            {"vgdrift",  required_argument, 0, '6'},
+            {"vgmu",  required_argument, 0, '7'},
             // CGMY model
             {"CGMY",  no_argument, 0, '4'},
             {"C",  required_argument, 0, 'C'},
@@ -685,7 +728,7 @@ int main(int argc, char** argv)
                 params.jumpMean = atof(optarg);
                 break;
             case 'u':
-                params.driftRate = atof(optarg);
+                params.mertonMean = atof(optarg);
                 break;
             case '0':
                 params.kouUpJumpProbability = atof(optarg);
@@ -695,6 +738,15 @@ int main(int argc, char** argv)
                 break;
             case '2':
                 params.kouDownRate = atof(optarg);
+                break;
+            case '5':
+                params.jumpType = VarianceGamma;
+                break;
+            case '6':
+                params.VG_driftRate = atof(optarg);
+                break;
+            case '7':
+                params.jumpMean = 1.0 / atof(optarg);
                 break;
             case '4':
                 params.jumpType = CGMY;

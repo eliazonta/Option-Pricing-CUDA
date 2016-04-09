@@ -12,7 +12,6 @@ Parameters::Parameters()
 , dividendRate(0.0)
 , expiryTime(10.0)
 , volatility(0.15)
-, driftRate(-1.08)
 , logBoundary(7.5)
 , resolution(2048)
 , timesteps(1)
@@ -49,7 +48,7 @@ double Parameters::kappa()
 {
     if (jumpType == Merton) {
         // Lippa (2013) p.13
-        return exp(driftRate + mertonNormalStdev * mertonNormalStdev / 2.0) - 1.0;
+        return exp(mertonMean + mertonNormalStdev * mertonNormalStdev / 2.0) - 1.0;
     } else if (jumpType == Kou) {
         // Lippa (2013) p.54
         return kouUpJumpProbability * kouUpRate / (kouUpRate - 1)

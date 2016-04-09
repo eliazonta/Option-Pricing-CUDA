@@ -17,6 +17,7 @@ enum JumpType
     None,
     Merton,
     Kou,
+    VarianceGamma,
     CGMY,
 };
 
@@ -66,29 +67,33 @@ struct Parameters
 
     // ---- Jump specific parameters -----
 
-    // Symbol: λ (lambda)
+    // Symbol: λ (lambda)    in Lippa (2013)
+    //         1 / \tilde{μ} in Lippa (2013) p.17
+    //         1 / μ         in Surkov (2009) p.26
     // Mean of the poisson distribution for jumps.
     double jumpMean;
+    // Return μ (mu) Surkov (2009)
+    double jumpMeanInverse() { return 1.0 / jumpMean; }
 
     JumpType jumpType;
 
     // Symbol: κ (kappa)
     double kappa();
 
-    // Symbol: γ (gamma) in Lippa (2013), \tilde{σ} in Surkov (2009)
+    // Symbol: γ (gamma) in Lippa (2013)
+    //         \tilde{σ} in Surkov (2009)
     // Parameter used for Merton jump distribution, which models jumps
     // as a standard normal.
     //
     // Normally, this is σ (standard deviation) in the normal,
     // but here we already use σ for the volatility so we need
     // another variable name.
-    //
-    // In Surkov (2009), this is represented with
     double mertonNormalStdev;
 
-    // Symbol: μ (mu)
+    // Symbol: μ (mu)    in Lippa (2013) p.16
+    //         \tilde{μ} in Surkov (2009) p.26
     // Mean of the normal in Merton jump diffusion.
-    double driftRate;
+    double mertonMean;
 
     // Parameters used for Kou jump diffusion, which is based on a
     // double exponential (a combination of two exponential to represent
@@ -99,6 +104,10 @@ struct Parameters
     double kouUpJumpProbability;
     double kouUpRate;
     double kouDownRate;
+
+    // Variance Gamma
+    // Symbol: γ (gamma) in Surkov (2009) p.26
+    double VG_driftRate;
 
     // CGMY
     double CGMY_C;
