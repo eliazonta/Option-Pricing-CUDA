@@ -474,7 +474,8 @@ void computeCPU_characteristic(Parameters& params, vector<complex>& characterist
     int N = params.resolution;
     double delta_frequency = params.delta_frequency();
 
-    // TODO: I think we're fine with just N/2 + 1 of these.
+    // Note: technically it would be fine to compute just N/2 + 1 of these,
+    // but compute them all for safety..
     for (int i = 0; i < N; i++) {
         // Frequency (see Lippa (2013) p.11 for discretization).
         double m;
@@ -532,21 +533,22 @@ void computeCPU_timesteps(Parameters& params,
         proxy.execForward();
 
         // Solve ODE
-        for (int j = 0; j < ft.size(); j++) {
+        int fourier_size = N / 2 + 1;
+        for (int j = 0; j < fourier_size; j++) {
             ft[j] = solveODE(ft[j], characteristic[j], from_time, to_time);
         }
 
         // Reverse transform
         proxy.execInverse();
 
-        for (int idx = 0; idx < optionValues.size(); idx++) {
+        for (int idx = 0; idx < N; idx++) {
             // Scale, fftw doesn't do it for you.
             optionValues[idx] /= N;
         }
 
         // Early exercise
         if (params.optionExerciseType == American) {
-            for (int j = 0; j < ft.size(); j++) {
+            for (int j = 0; j < N; j++) {
                 optionValues[j] = earlyExercise(optionValues[j],
                         params.startPrice, params.strikePrice,
                         x_min + j * delta_x, params.optionPayoffType);
@@ -562,8 +564,7 @@ void computeCPU(Parameters& params)
     // Option values at time t = 0
     vector<double> optionValues = optionValuesAtPayoff(params);
 
-    // Characteristic Ψ (psi) and Jump function
-    // TODO: I think we're fine with just N/2 + 1 of these.
+    // Characteristic Ψ (psi)
     vector<complex> characteristic(N);
     computeCPU_characteristic(params, characteristic);
 
@@ -614,11 +615,12 @@ void computeGPU_initialize(Parameters& params,
 void computeGPU_characteristic(Parameters& params,
                                complex* d_characteristic, complex*& d_jump_ft)
 {
-    // TODO: I think we're fine with just N/2 + 1 of these.
     int N = params.resolution;
 
     double delta_frequency = params.delta_frequency();
 
+    // Note: technically it would be fine to compute just N/2 + 1 of these,
+    // but compute them all for safety..
     if (params.jumpType == VarianceGamma) {
         prepareVarianceGammaCharacteristic<<<max(N / MAX_BLOCK_SIZE, 1), min(N, MAX_BLOCK_SIZE)>>>(
                 d_characteristic,
