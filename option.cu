@@ -467,7 +467,10 @@ void computeCPU(Parameters& params)
         }
         double k = delta_frequency * m;
 
-        if (params.jumpType == CGMY) {
+        if (params.jumpType == VarianceGamma) {
+            characteristic[i] = varianceGammaCharacteristic(k,
+                    params.jumpMeanInverse(), params.VG_driftRate, params.volatility);
+        } else if (params.jumpType == CGMY) {
             characteristic[i] = CGMYCharacteristic(k,
                     params.CGMY_C, params.CGMY_G, params.CGMY_M, params.CGMY_Y,
                     tgamma(-params.CGMY_Y));
