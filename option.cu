@@ -441,22 +441,12 @@ void printPrices(vector<double>& prices) {
     printf("\n");
 }
 
-void computeCPU(Parameters& params)
+void computeCPU_characteristic(Parameters& params, vector<complex>& characteristic)
 {
     int N = params.resolution;
+    double delta_frequency = params.delta_frequency();
 
-    // Option values at time t = 0
-    vector<double> optionValues = optionValuesAtPayoff(params);
-
-    // Discretization parameters (see p.11)
-    double x_min = params.x_min();
-    double x_max = params.x_max();
-    double delta_x = (x_max - x_min) / (N - 1);
-    double delta_frequency = (double)(N - 1) / (x_max - x_min) / N;
-
-    // Characteristic Ψ (psi) and Jump function
     // TODO: I think we're fine with just N/2 + 1 of these.
-    vector<complex> characteristic(N);
     for (int i = 0; i < N; i++) {
         // Frequency (see Lippa (2013) p.11 for discretization).
         double m;
@@ -490,8 +480,15 @@ void computeCPU(Parameters& params)
                     params.volatility, params.jumpMean, params.kappa());
         }
     }
+}
 
-    // Forward transform
+void computeCPU_timesteps(Parameters& params, vector<double>& optionValues, vector<complex>& characteristic)
+{
+    int N = params.resolution;
+    double x_min = params.x_min();
+    double delta_x = params.delta_x();
+
+    // Forward transform of option price
     vector<complex> ft(N);
 
     // FFTW execution
@@ -526,14 +523,28 @@ void computeCPU(Parameters& params)
             }
         }
     }
+}
 
-    double answer_index = -x_min * (N - 1) / (x_max - x_min);
-    assert(answer_index == (int)answer_index);
+void computeCPU(Parameters& params)
+{
+    int N = params.resolution;
+
+    // Option values at time t = 0
+    vector<double> optionValues = optionValuesAtPayoff(params);
+
+    // Characteristic Ψ (psi) and Jump function
+    // TODO: I think we're fine with just N/2 + 1 of these.
+    vector<complex> characteristic(N);
+    computeCPU_characteristic(params, characteristic);
+
+    computeCPU_timesteps(params, optionValues, characteristic);
+
+    int answer_index = params.answer_index();
 
     if (params.verbose) {
-        printf("Price at index %i: %f\n", (int)answer_index, optionValues[(int)answer_index]);
+        printf("Price at index %i: %f\n", answer_index, optionValues[answer_index]);
     } else {
-        printf("%f\n", optionValues[(int)answer_index]);
+        printf("%f\n", optionValues[answer_index]);
     }
 }
 
