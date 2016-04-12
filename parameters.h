@@ -44,9 +44,12 @@ struct Parameters
     // Symbol: σ (sigma)
     double volatility;
 
-    // Symbol: x_min and x_max
+    // Discretization parameters (see Lippa (2013) p.11)
     double x_min();
     double x_max();
+    double delta_x();
+    double delta_frequency();
+    int answer_index();
 
     // Symbol: N
     unsigned int resolution;

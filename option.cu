@@ -218,7 +218,7 @@ void prepareKouJumpFT(complex* jump_ft, double delta_frequency,
 }
 
 __host__ __device__ static __inline__
-complex jumpModelCharacteristic(double k, complex jump_ft,
+complex jumpDiffusionCharacteristic(double k, complex jump_ft,
         double riskFreeRate, double dividend,
         double volatility, double jumpMean,
         double kappa)
@@ -240,7 +240,7 @@ complex jumpModelCharacteristic(double k, complex jump_ft,
 }
 
 __global__
-void prepareJumpModelCharacteristic(
+void prepareJumpDiffusionCharacteristic(
         complex* characteristic, complex* jump_ft,
         double riskFreeRate, double dividend,
         double volatility, double jumpMean,
@@ -265,7 +265,7 @@ void prepareJumpModelCharacteristic(
         jumpTerm = makeComplex(0, 0);
     }
 
-    characteristic[idx] = jumpModelCharacteristic(k, jumpTerm,
+    characteristic[idx] = jumpDiffusionCharacteristic(k, jumpTerm,
             riskFreeRate, dividend, volatility, jumpMean, kappa);
 }
 
@@ -485,7 +485,7 @@ void computeCPU(Parameters& params)
                 }
             }
 
-            characteristic[i] = jumpModelCharacteristic(k, jumpFT,
+            characteristic[i] = jumpDiffusionCharacteristic(k, jumpFT,
                     params.riskFreeRate, params.dividendRate,
                     params.volatility, params.jumpMean, params.kappa());
         }
@@ -537,17 +537,14 @@ void computeCPU(Parameters& params)
     }
 }
 
-void computeGPU(Parameters& params)
+void computeGPU_initialize(Parameters& params,
+                           double*& d_prices, complex*& d_ft, complex*& d_characteristic,
+                           cufftHandle& plan, cufftHandle& planr)
 {
     int N = params.resolution;
-
-    // Discretization parameters (see p.11)
     double x_min = params.x_min();
     double x_max = params.x_max();
-    double delta_x = (x_max - x_min) / (N - 1);
-    double delta_frequency = (double)(N - 1) / (x_max - x_min) / N;
 
-    double* d_prices;
     checkCuda(cudaMalloc((void**)&d_prices, sizeof(double) * N));
 
     // Option values at time t = 0
@@ -555,21 +552,27 @@ void computeGPU(Parameters& params)
             d_prices, x_min, x_max, params.startPrice, params.strikePrice, params.optionPayoffType);
     checkCuda(cudaPeekAtLastError());
 
-    complex* d_ft;
     checkCuda(cudaMalloc((void**)&d_ft, sizeof(complex) * N));
 
-    cufftHandle plan;
-    cufftHandle planr;
-
-    // Float to complex interleaved
+    // Float to complex interleaved transform preparation.
+    // NOTE: This is the most expensive part of this function if the number of timesteps
+    //       is small, because cufftPlan calculates O(N) transcendental functions. On a GTX 980,
+    //       it takes on the order of 500 ms. If this code is eventually extended to calculate
+    //       multiple different options of the same size, this (and other initialization code)
+    //       should be called only once.
     checkCufft(cufftPlan1d(&plan, N, CUFFT_D2Z, /* deprecated? */ 1));
     checkCufft(cufftPlan1d(&planr, N, CUFFT_Z2D, /* deprecated? */ 1));
 
-    // Characteristic Ψ (psi) and Jump function
-    // TODO: I think we're fine with just N/2 + 1 of these.
-    complex *d_characteristic = NULL;
     checkCuda(cudaMalloc((void**)&d_characteristic, sizeof(complex) * N));
-    complex *d_jump_ft = NULL;
+}
+
+void computeGPU_characteristic(Parameters& params,
+                               complex* d_characteristic, complex*& d_jump_ft)
+{
+    // TODO: I think we're fine with just N/2 + 1 of these.
+    int N = params.resolution;
+
+    double delta_frequency = params.delta_frequency();
 
     if (params.jumpType == VarianceGamma) {
         prepareVarianceGammaCharacteristic<<<max(N / MAX_BLOCK_SIZE, 1), min(N, MAX_BLOCK_SIZE)>>>(
@@ -599,13 +602,22 @@ void computeGPU(Parameters& params)
             }
         }
 
-        prepareJumpModelCharacteristic<<<max(N / MAX_BLOCK_SIZE, 1), min(N, MAX_BLOCK_SIZE)>>>(
+        prepareJumpDiffusionCharacteristic<<<max(N / MAX_BLOCK_SIZE, 1), min(N, MAX_BLOCK_SIZE)>>>(
                 d_characteristic, d_jump_ft,
                 params.riskFreeRate, params.dividendRate,
                 params.volatility, params.jumpMean, params.kappa(),
                 delta_frequency, N);
     }
     checkCuda(cudaPeekAtLastError());
+}
+
+void computeGPU_timesteps(Parameters& params, double* d_prices, complex* d_ft,
+                          complex* d_characteristic,
+                          cufftHandle& plan, cufftHandle& planr)
+{
+    int N = params.resolution;
+    double x_min = params.x_min();
+    double delta_x = params.delta_x();
 
     for (int i = 0; i < params.timesteps; i++) {
         double from_time = (double)i / params.timesteps * params.expiryTime;
@@ -644,25 +656,46 @@ void computeGPU(Parameters& params)
             checkCuda(cudaPeekAtLastError());
         }
     }
+}
+
+void computeGPU(Parameters& params)
+{
+    int N = params.resolution;
+
+    // Convention: pointers to GPU memory (to "device" memory) should be prefixed with d_
+    // This is common in CUDA code to avoid dereferencing pointers in the wrong place, and
+    // also one of the few proper ways to use Hungarian notation.
+    double* d_prices;                   // Option values
+    complex* d_ft;                      // Option values in fourier space
+    complex* d_characteristic = NULL;   // Characteristic Ψ (psi)
+    cufftHandle plan;
+    cufftHandle planr;
+
+    computeGPU_initialize(params, d_prices, d_ft, d_characteristic, plan, planr);
+
+    // For jump diffusion, store the fourier transform of the jump function.
+    complex *d_jump_ft = NULL;
+    computeGPU_characteristic(params, d_characteristic, d_jump_ft);
+
+    computeGPU_timesteps(params, d_prices, d_ft, d_characteristic, plan, planr);
 
     vector<double> optionValues(N);
     checkCuda(cudaMemcpy(&optionValues[0], d_prices, sizeof(double) * N,
                          cudaMemcpyDeviceToHost));
 
-    // Destroy the cuFFT plan.
+    // Cleanup.
     cufftDestroy(plan);
     cufftDestroy(planr);
     cudaFree(d_prices);
     cudaFree(d_ft);
     cudaFree(d_jump_ft);
 
-    double answer_index = -x_min * (N - 1) / (x_max - x_min);
-    assert(answer_index == (int)answer_index);
+    int answer_index = params.answer_index();
 
     if (params.verbose) {
-        printf("Price at index %i: %f\n", (int)answer_index, optionValues[(int)answer_index]);
+        printf("Price at index %i: %f\n", answer_index, optionValues[answer_index]);
     } else {
-        printf("%f\n", optionValues[(int)answer_index]);
+        printf("%f\n", optionValues[answer_index]);
     }
 }
 

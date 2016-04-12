@@ -44,6 +44,23 @@ double Parameters::x_max()
     return -x_min() * 2 * (resolution - 1) / resolution + x_min();
 }
 
+double Parameters::delta_x()
+{
+    return (x_max() - x_min()) / (resolution - 1);
+}
+
+double Parameters::delta_frequency()
+{
+    return (double)(resolution - 1) / (x_max() - x_min()) / resolution;
+}
+
+int Parameters::answer_index()
+{
+    double answer_index = -x_min() * (resolution - 1) / (x_max() - x_min());
+    assert(answer_index == (int)answer_index);
+    return (int)answer_index;
+}
+
 double Parameters::kappa()
 {
     if (jumpType == Merton) {
