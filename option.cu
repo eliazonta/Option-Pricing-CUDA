@@ -101,6 +101,34 @@ void normalize(double* ft, int length)
 }
 
 __host__ __device__ static __inline__
+double optionValueAtPayoff(int i, double x_min, double delta_x,
+                           double startPrice, double strikePrice,
+                           OptionPayoffType type)
+{
+    double assetPrice = startPrice * exp(x_min + i * delta_x);
+    if (type == Call) {
+        return max(assetPrice - strikePrice, 0.0);
+    } else {
+        return max(strikePrice - assetPrice, 0.0);
+    }
+}
+
+__global__
+void optionValuesAtPayoff(double* optionValues,
+                          double x_min, double x_max,
+                          double startPrice, double strikePrice,
+                          OptionPayoffType type)
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int N = blockDim.x * gridDim.x;
+
+    double delta_x = (x_max - x_min) / (N - 1);
+
+    optionValues[idx] = optionValueAtPayoff(idx, x_min, delta_x,
+                                            startPrice, strikePrice, type);
+}
+
+__host__ __device__ static __inline__
 double earlyExercise(double optionValue, double startPrice, double strikePrice,
         double x, OptionPayoffType type)
 {
@@ -361,34 +389,20 @@ void solveODE(complex* ft,
     ft[idx] = solveODE(old_value, psi, from_time, to_time);
 }
 
-vector<double> assetPricesAtPayoff(Parameters& prms)
+vector<double> optionValuesAtPayoff(Parameters& prms)
 {
-    double N = prms.resolution;
-    vector<double> out(N);
+    vector<double> out(prms.resolution);
 
-    // Discretization parameters (see p.11)
+    double N = prms.resolution;
+
+    // Discretization parameters (see Lippa (2013) p.11)
     double x_max = prms.x_max();
     double x_min = prms.x_min();
     double delta_x = (x_max - x_min) / (N - 1);
 
     for (int i = 0; i < N; i++) {
-        out[i] = prms.startPrice * exp(x_min + i * delta_x);
-    }
-
-    return out;
-}
-
-vector<double> optionValuesAtPayoff(Parameters& prms, vector<double>& assetPrices)
-{
-    vector<double> out(prms.resolution);
-
-    double N = prms.resolution;
-    for (int i = 0; i < N; i++) {
-        if (prms.optionPayoffType == Call) {
-            out[i] = max(assetPrices[i] - prms.strikePrice, 0.0);
-        } else {
-            out[i] = max(prms.strikePrice - assetPrices[i], 0.0);
-        }
+        out[i] = optionValueAtPayoff(i, x_min, delta_x, prms.startPrice, prms.strikePrice,
+                                     prms.optionPayoffType);
     }
 
     return out;
@@ -427,11 +441,12 @@ void printPrices(vector<double>& prices) {
     printf("\n");
 }
 
-void computeCPU(Parameters& params, vector<double>& assetPrices, vector<double>& initialValues)
+void computeCPU(Parameters& params)
 {
     int N = params.resolution;
 
-    vector<double> optionValues = initialValues;
+    // Option values at time t = 0
+    vector<double> optionValues = optionValuesAtPayoff(params);
 
     // Discretization parameters (see p.11)
     double x_min = params.x_min();
@@ -519,17 +534,23 @@ void computeCPU(Parameters& params, vector<double>& assetPrices, vector<double>&
     }
 }
 
-void computeGPU(Parameters& params, vector<double>& assetPrices, vector<double>& initialValues)
+void computeGPU(Parameters& params)
 {
-    // Option values at time t = 0
-    vector<double> optionValues = initialValues;
-
     int N = params.resolution;
+
+    // Discretization parameters (see p.11)
+    double x_min = params.x_min();
+    double x_max = params.x_max();
+    double delta_x = (x_max - x_min) / (N - 1);
+    double delta_frequency = (double)(N - 1) / (x_max - x_min) / N;
 
     double* d_prices;
     checkCuda(cudaMalloc((void**)&d_prices, sizeof(double) * N));
-    checkCuda(cudaMemcpy(d_prices, &optionValues[0], sizeof(double) * N,
-                         cudaMemcpyHostToDevice));
+
+    // Option values at time t = 0
+    optionValuesAtPayoff<<<max(N / MAX_BLOCK_SIZE, 1), min(N, MAX_BLOCK_SIZE)>>>(
+            d_prices, x_min, x_max, params.startPrice, params.strikePrice, params.optionPayoffType);
+    checkCuda(cudaPeekAtLastError());
 
     complex* d_ft;
     checkCuda(cudaMalloc((void**)&d_ft, sizeof(complex) * N));
@@ -540,12 +561,6 @@ void computeGPU(Parameters& params, vector<double>& assetPrices, vector<double>&
     // Float to complex interleaved
     checkCufft(cufftPlan1d(&plan, N, CUFFT_D2Z, /* deprecated? */ 1));
     checkCufft(cufftPlan1d(&planr, N, CUFFT_Z2D, /* deprecated? */ 1));
-
-    // Discretization parameters (see p.11)
-    double x_min = params.x_min();
-    double x_max = params.x_max();
-    double delta_x = (x_max - x_min) / (N - 1);
-    double delta_frequency = (double)(N - 1) / (x_max - x_min) / N;
 
     // Characteristic Ψ (psi) and Jump function
     // TODO: I think we're fine with just N/2 + 1 of these.
@@ -627,6 +642,7 @@ void computeGPU(Parameters& params, vector<double>& assetPrices, vector<double>&
         }
     }
 
+    vector<double> optionValues(N);
     checkCuda(cudaMemcpy(&optionValues[0], d_prices, sizeof(double) * N,
                          cudaMemcpyDeviceToHost));
 
@@ -818,21 +834,18 @@ int main(int argc, char** argv)
         printf("\nChecks finished. Starting option calculation...\n\n");
     }
 
-    vector<double> assetPrices = assetPricesAtPayoff(params);
-    vector<double> optionValues = optionValuesAtPayoff(params, assetPrices);
-
     // http://stackoverflow.com/questions/5521146/what-is-the-best-most-accurate-timer-in-c
     auto start = Clock::now();
     if (useCPU) {
         if (params.verbose) {
             printf("\nComputing CPU results...\n");
         }
-        computeCPU(params, assetPrices, optionValues);
+        computeCPU(params);
     } else {
         if (params.verbose) {
             printf("\nComputing GPU results...\n");
         }
-        computeGPU(params, assetPrices, optionValues);
+        computeGPU(params);
     }
     auto end = Clock::now();
 
