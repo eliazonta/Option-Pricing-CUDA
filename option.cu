@@ -11,9 +11,9 @@
 #include "fftwproxy.h"
 #include "utils.h"
 
+// For quick testing of floats only, otherwise this is obviously a terrible idea.
 #ifdef USE_FLOAT
 
-// For quick testing of floats only, otherwise this is obviously a terrible idea.
 #define double float
 #define gendouble2 genfloat2
 #define complex cufftComplex
@@ -52,6 +52,10 @@
 using namespace std;
 
 typedef std::chrono::high_resolution_clock Clock;
+
+// ----------------------------------------------------------------------------
+// Complex math helper functions
+// ----------------------------------------------------------------------------
 
 __host__ __device__ static __inline__
 complex cuComplexExponential(complex x)
@@ -92,6 +96,10 @@ complex cuComplexScalarMult(double scalar, complex x)
     double b = cuCimag(x);
     return makeComplex(scalar * a, scalar * b);
 }
+
+// ----------------------------------------------------------------------------
+// Option pricing helper functions and kernels
+// ----------------------------------------------------------------------------
 
 __global__
 void normalize(double* ft, int length)
@@ -151,6 +159,11 @@ void earlyExercise(double* optionValues, double startPrice, double strikePrice,
             x_min + idx * delta_x, type);
 }
 
+// ----------------------------------------------------------------------------
+// Calculation of jump diffusion and pure jump characteristic functions
+// ----------------------------------------------------------------------------
+
+// Fourier transform of the Merton jump function.
 __host__ __device__ static __inline__
 complex mertonJumpFT(double k, double mertonNormalStdev, double mertonMean)
 {
@@ -163,25 +176,7 @@ complex mertonJumpFT(double k, double mertonNormalStdev, double mertonMean)
     return cuComplexExponential(exponent);
 }
 
-// Fourier transform of the Merton jump function.
-__global__
-void prepareMertonJumpFT(complex* jump_ft, double delta_frequency,
-                         int N, double mertonNormalStdev, double mertonMean)
-{
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-
-    // Frequency (see p.11 for discretization).
-    double m;
-    if (idx <= N / 2) {
-        m = idx;
-    } else {
-        m = idx - N;
-    }
-    double k = delta_frequency * m;
-
-    jump_ft[idx] = mertonJumpFT(k, mertonNormalStdev, mertonMean);
-}
-
+// Fourier transform of the Kou jump function (double exponential).
 __host__ __device__ static __inline__
 complex kouJumpFT(double k, double kouUpJumpProbability,
         double kouUpRate, double kouDownRate)
@@ -195,26 +190,6 @@ complex kouJumpFT(double k, double kouUpJumpProbability,
             makeComplex(1, -2 * M_PI * k / kouDownRate));
 
     return cuCadd(up, down);
-}
-
-// Fourier transform of the Kou jump function
-__global__
-void prepareKouJumpFT(complex* jump_ft, double delta_frequency,
-                      int N, double kouUpJumpProbability,
-                      double kouUpRate, double kouDownRate)
-{
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-
-    // Frequency (see p.11 for discretization).
-    double m;
-    if (idx <= N / 2) {
-        m = idx;
-    } else {
-        m = idx - N;
-    }
-    double k = delta_frequency * m;
-
-    jump_ft[idx] = kouJumpFT(k, kouUpJumpProbability, kouUpRate, kouDownRate);
 }
 
 __host__ __device__ static __inline__
@@ -237,6 +212,98 @@ complex jumpDiffusionCharacteristic(double k, complex jump_ft,
     psi = cuCadd(psi, cuComplexScalarMult(jumpMean, cuConj(jump_ft)));
 
     return psi;
+}
+
+__host__ __device__ static __inline__
+complex varianceGammaCharacteristic(double k,
+        double mu,      // jumpMeanInv
+        double gamma,   // vg_drift
+        double sigma    // volatility
+        )
+{
+    // See Surkov (2009) p.26 or Lippa (2013) p.16
+    double w = 2 * M_PI * k;
+    complex c = makeComplex(1 + sigma * sigma * mu * w * w / 2, -gamma * mu * w);
+    complex vg = cuComplexScalarMult(-1.0 / mu, cuComplexLog(c));
+    return vg;
+}
+
+__host__ __device__ static __inline__
+complex CGMYCharacteristic(double k,
+        double C, double G, double M, double Y,
+        double gamma /* Γ(-Y), do it on the CPU */)
+{
+    // Note that the equation in those papers use the symbol ω
+    // instead of k for the frequency.
+    double w = 2 * M_PI * k;
+
+    // Variance Gamma and CGMY equations see Lippa (2013) p.17
+    // and Surkov (2009) p.26
+    // Originally from Carr (2002) p.313
+
+    if (Y == 0) {
+        // When Y == 0, CGMY == Variance Gamma (Wang, Wan, Forsyth (2007) p. 18)
+
+        // Note that we need to compute the parameters μ (mu), γ (gamma), σ (sigma).
+        // We solve for them by using C1 and C2.
+
+        // We obtain C1 and C2 by making the Levy Density of Variance Gamma and CGMY
+        // equal when Y == 0.
+        double C1 = (G - M) / 2.0;
+        double C2 = (G + M) / 2.0;
+        double mu = 1.0 / C;
+        double temp = C2 / C1;
+        double gamma = 2 * C / (C1 * (temp * temp - 1));
+        double sigma = sqrt(gamma / C1);
+
+        return varianceGammaCharacteristic(k, mu, gamma, sigma);
+    } else {
+        complex MwY = cuComplexPower(makeComplex(M, -w), makeComplex(Y, 0));
+        complex GwY = cuComplexPower(makeComplex(G, w), makeComplex(Y, 0));
+        return cuComplexScalarMult(C * gamma,
+                cuCadd(makeComplex(-pow(M, Y) - pow(G, Y), 0), cuCadd(MwY, GwY)));
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Characteristic function kernels
+// ----------------------------------------------------------------------------
+
+__global__
+void prepareMertonJumpFT(complex* jump_ft, double delta_frequency,
+                         int N, double mertonNormalStdev, double mertonMean)
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    // Frequency (see Lippa (2013) p.11 for discretization).
+    double m;
+    if (idx <= N / 2) {
+        m = idx;
+    } else {
+        m = idx - N;
+    }
+    double k = delta_frequency * m;
+
+    jump_ft[idx] = mertonJumpFT(k, mertonNormalStdev, mertonMean);
+}
+
+__global__
+void prepareKouJumpFT(complex* jump_ft, double delta_frequency,
+                      int N, double kouUpJumpProbability,
+                      double kouUpRate, double kouDownRate)
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    // Frequency (see Lippa (2013) p.11 for discretization).
+    double m;
+    if (idx <= N / 2) {
+        m = idx;
+    } else {
+        m = idx - N;
+    }
+    double k = delta_frequency * m;
+
+    jump_ft[idx] = kouJumpFT(k, kouUpJumpProbability, kouUpRate, kouDownRate);
 }
 
 __global__
@@ -269,20 +336,6 @@ void prepareJumpDiffusionCharacteristic(
             riskFreeRate, dividend, volatility, jumpMean, kappa);
 }
 
-__host__ __device__ static __inline__
-complex varianceGammaCharacteristic(double k,
-        double mu,      // jumpMeanInv
-        double gamma,   // vg_drift
-        double sigma    // volatilityk
-        )
-{
-    // See Surkov (2009) p.26 or Lippa (2013) p.16
-    double w = 2 * M_PI * k;
-    complex c = makeComplex(1 + sigma * sigma * mu * w * w / 2, -gamma * mu * w);
-    complex vg = cuComplexScalarMult(-1.0 / mu, cuComplexLog(c));
-    return vg;
-}
-
 __global__
 void prepareVarianceGammaCharacteristic(
         complex* characteristic,
@@ -301,44 +354,6 @@ void prepareVarianceGammaCharacteristic(
     double k = delta_frequency * m;
 
     characteristic[idx] = varianceGammaCharacteristic(k, jumpMeanInv, vg_drift, volatility);
-}
-
-__host__ __device__ static __inline__
-complex CGMYCharacteristic(double k,
-        double C, double G, double M, double Y,
-        double gamma /* Γ(-Y), do it on the CPU */)
-{
-    // Note that the equation in those papers use the symbol ω
-    // instead of k for the frequency.
-    double w = 2 * M_PI * k;
-
-    // Variance Gamma and CGMY equations see Lippa (2013) p.17
-    // and Surkov (2009) p.26
-    // Originally from Carr (2002) p.313
-
-    if (Y == 0) {
-        // When Y == 0, CGMY == Variance Gamma (Wang, Wan, Forsyth (2007) p. 18)
-
-        // Note that we need to compute the parameters μ (mu), γ (gamma), σ (sigma).
-        // We solve for them by using C1 and C2.
-
-        // We obtain C1 and C2 by making the Levy Density of Variance Gamma and CGMY
-        // equal when Y == 0.
-        double C1 = (G - M) / 2.0;
-        double C2 = (G + M) / 2.0;
-        double mu = 1.0 / C;
-        double temp = C2 / C1;
-        double gamma = 2 * C / (C1 * (temp * temp - 1));
-        double sigma = sqrt(gamma / C1);
-
-        complex c = makeComplex(1 + sigma * sigma * mu * w * w / 2, -gamma * mu * w);
-        return cuComplexScalarMult(-1.0 / mu, cuComplexLog(c));
-    } else {
-        complex MwY = cuComplexPower(makeComplex(M, -w), makeComplex(Y, 0));
-        complex GwY = cuComplexPower(makeComplex(G, w), makeComplex(Y, 0));
-        return cuComplexScalarMult(C * gamma,
-                cuCadd(makeComplex(-pow(M, Y) - pow(G, Y), 0), cuCadd(MwY, GwY)));
-    }
 }
 
 __global__
@@ -361,6 +376,10 @@ void prepareCGMYCharacteristic(
 
     characteristic[idx] = CGMYCharacteristic(k, C, G, M, Y, gamma);
 }
+
+// ----------------------------------------------------------------------------
+// Solving the ODE to compute option prices
+// ----------------------------------------------------------------------------
 
 __host__ __device__ static __inline__
 complex solveODE(complex ft, complex psi, double from_time, double to_time)
@@ -389,6 +408,10 @@ void solveODE(complex* ft,
     ft[idx] = solveODE(old_value, psi, from_time, to_time);
 }
 
+// ----------------------------------------------------------------------------
+// CPU-side helper functions
+// ----------------------------------------------------------------------------
+
 vector<double> optionValuesAtPayoff(Parameters& prms)
 {
     vector<double> out(prms.resolution);
@@ -398,7 +421,7 @@ vector<double> optionValuesAtPayoff(Parameters& prms)
     // Discretization parameters (see Lippa (2013) p.11)
     double x_max = prms.x_max();
     double x_min = prms.x_min();
-    double delta_x = (x_max - x_min) / (N - 1);
+    double delta_x = prms.delta_x();
 
     for (int i = 0; i < N; i++) {
         out[i] = optionValueAtPayoff(i, x_min, delta_x, prms.startPrice, prms.strikePrice,
@@ -441,6 +464,11 @@ void printPrices(vector<double>& prices) {
     printf("\n");
 }
 
+
+// ----------------------------------------------------------------------------
+// CPU-side option price calculation
+// ----------------------------------------------------------------------------
+
 void computeCPU_characteristic(Parameters& params, vector<complex>& characteristic)
 {
     int N = params.resolution;
@@ -482,7 +510,9 @@ void computeCPU_characteristic(Parameters& params, vector<complex>& characterist
     }
 }
 
-void computeCPU_timesteps(Parameters& params, vector<double>& optionValues, vector<complex>& characteristic)
+void computeCPU_timesteps(Parameters& params,
+                          vector<double>& optionValues,
+                          vector<complex>& characteristic)
 {
     int N = params.resolution;
     double x_min = params.x_min();
@@ -547,6 +577,10 @@ void computeCPU(Parameters& params)
         printf("%f\n", optionValues[answer_index]);
     }
 }
+
+// ----------------------------------------------------------------------------
+// GPU-side option price calculation
+// ----------------------------------------------------------------------------
 
 void computeGPU_initialize(Parameters& params,
                            double*& d_prices, complex*& d_ft, complex*& d_characteristic,
