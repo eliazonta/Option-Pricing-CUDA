@@ -149,7 +149,6 @@ double earlyExercise(double optionValue, double startPrice, double strikePrice,
 }
 
 __global__
-// TODO: Need better argument names for the last two...
 void earlyExercise(double* optionValues, double startPrice, double strikePrice,
                    double x_min, double delta_x,
                    OptionPayoffType type)
@@ -194,18 +193,21 @@ complex kouJumpFT(double k, double kouUpJumpProbability,
 
 __host__ __device__ static __inline__
 complex jumpDiffusionCharacteristic(double k, complex jump_ft,
-        double riskFreeRate, double dividend,
+        double riskFreeRate,
+        double genericFee,        // ξ (xi) in Lippa (2013)
         double volatility, double jumpMean,
         double kappa)
 {
-    // Calculate Ψ (psi) (Lippa (2013) 2.14)
-    // The dividend is shown on p.13
-    // Equation slightly simplified to save a few operations.
-    // TODO: Continuous dividend is too specific, there's more interpretations (see thesis).
+    // Calculate Ψ (psi)
+    // Note that here, we are using the equation from Lippa (2013).
+    // The simple version is equation 2.14 but the more general version,
+    // that includes a generic fee (usually the dividend), is shown on p.15
+
+    // Equation slightly modified to save a few operations.
     double fst_term = volatility * M_PI * k;
     complex psi = makeComplex(
             (-2.0 * fst_term * fst_term) - (riskFreeRate + jumpMean),
-            (riskFreeRate - dividend - jumpMean * kappa - volatility * volatility / 2.0) *
+            (riskFreeRate - genericFee - jumpMean * kappa - volatility * volatility / 2.0) *
                       (2 * M_PI * k));
 
     // Jump component.
