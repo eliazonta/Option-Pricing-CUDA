@@ -15,6 +15,7 @@
 
 // For quick testing of floats only, otherwise this is obviously a terrible idea.
 #define double float
+#define gendouble2 genfloat2
 #define complex cufftComplex
 
 // See definitions in usr/local/cuda/include/cuComplex.h
@@ -24,13 +25,14 @@
 #define cuCmul cuCmulf
 #define cuCdiv cuCdivf
 #define cuConj cuConjf
+#define cuCabs cuCabsf
 #define CUFFT_D2Z CUFFT_R2C
 #define CUFFT_Z2D CUFFT_C2R
 #define cufftExecD2Z cufftExecR2C
 #define cufftExecZ2D cufftExecC2R
 #define makeComplex make_cuComplex
 
-// If we're using floats, assume that we're using CUDA Compute Capability < 1.3
+// If we're using floats, assume that we're using CUDA Compute Capability < 1.3,
 // which means the max block size is 512.
 #define MAX_BLOCK_SIZE 512
 
@@ -39,10 +41,10 @@
 #define complex cufftDoubleComplex
 #define makeComplex make_cuDoubleComplex
 
-// If we're using floats, assume that we're using CUDA Compute Capability >= 2.x
+// If we're using doubles, assume that we're using CUDA Compute Capability >= 2.x,
 // which means the max block size is 1024.
 // (We're ignoring Compute Capability 1.3 which supports doubles but not block
-//  sizes of 1024 since we don't have any devices of that particular generation)
+// sizes of 1024 since we don't have any devices of that particular generation)
 #define MAX_BLOCK_SIZE 1024
 
 #endif
@@ -475,7 +477,7 @@ void computeCPU(Parameters& params, vector<double>& assetPrices, vector<double>&
     vector<complex> ft(N);
 
     // FFTW execution
-    FFTWProxy proxy(N, &optionValues[0], (genfloat2 *)(&ft[0]));
+    FFTWProxy proxy(N, &optionValues[0], (gendouble2 *)(&ft[0]));
 
     for (int i = 0; i < params.timesteps; i++) {
         double from_time = (double)i / params.timesteps * params.expiryTime;

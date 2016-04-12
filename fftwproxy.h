@@ -3,7 +3,10 @@
 #include "utils.h"
 
 // Generic way of declaring a structure of two doubles.
-typedef double genfloat2[2];
+typedef float genfloat2[2];
+
+// Generic way of declaring a structure of two doubles.
+typedef double gendouble2[2];
 
 // An instance of this class just forwards calls to FFTW.
 //
@@ -21,7 +24,8 @@ struct FFTWProxyImpl;
 class FFTWProxy
 {
 public:
-    FFTWProxy(int n, double* timespace, genfloat2* freqspace);
+    FFTWProxy(int n, float* timespace, genfloat2* freqspace);
+    FFTWProxy(int n, double* timespace, gendouble2* freqspace);
     ~FFTWProxy();
 
     void execForward();
