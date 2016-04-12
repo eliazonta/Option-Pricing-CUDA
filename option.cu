@@ -837,7 +837,7 @@ int main(int argc, char** argv)
     auto end = Clock::now();
 
     chrono::duration<double, milli> fp_ms = end - start;
-    printf("Computed with %s in %f ms (timesteps %d, resolution %d).\n",
+    printf("Computed with %s in %.2f ms (timesteps %d, resolution %d).\n",
             useCPU ? "CPU" : "GPU",
             fp_ms.count(), params.timesteps, params.resolution);
 
