@@ -273,9 +273,10 @@ complex CGMYCharacteristic(double k,
 
 __global__
 void prepareMertonJumpFT(complex* jump_ft, double delta_frequency,
-                         int N, double mertonNormalStdev, double mertonMean)
+                         double mertonNormalStdev, double mertonMean)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int N = blockDim.x * gridDim.x;
 
     // Frequency (see Lippa (2013) p.11 for discretization).
     double m;
@@ -291,10 +292,11 @@ void prepareMertonJumpFT(complex* jump_ft, double delta_frequency,
 
 __global__
 void prepareKouJumpFT(complex* jump_ft, double delta_frequency,
-                      int N, double kouUpJumpProbability,
+                      double kouUpJumpProbability,
                       double kouUpRate, double kouDownRate)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int N = blockDim.x * gridDim.x;
 
     // Frequency (see Lippa (2013) p.11 for discretization).
     double m;
@@ -313,10 +315,10 @@ void prepareJumpDiffusionCharacteristic(
         complex* characteristic, complex* jump_ft,
         double riskFreeRate, double dividend,
         double volatility, double jumpMean,
-        double kappa, double delta_frequency,
-        int N)
+        double kappa, double delta_frequency)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int N = blockDim.x * gridDim.x;
 
     // Frequency (see Lippa (2013) p.11 for discretization).
     double m;
@@ -341,10 +343,11 @@ void prepareJumpDiffusionCharacteristic(
 __global__
 void prepareVarianceGammaCharacteristic(
         complex* characteristic,
-        int N, double delta_frequency,
+        double delta_frequency,
         double jumpMeanInv, double vg_drift, double volatility)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int N = blockDim.x * gridDim.x;
 
     // Frequency (see Lippa (2013) p.11 for discretization).
     double m;
@@ -361,11 +364,12 @@ void prepareVarianceGammaCharacteristic(
 __global__
 void prepareCGMYCharacteristic(
         complex* characteristic,
-        int N, double delta_frequency,
+        double delta_frequency,
         double C, double G, double M, double Y,
         double gamma /* Γ(-Y), do it on the CPU */)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int N = blockDim.x * gridDim.x;
 
     // Frequency (see Lippa (2013) p.11 for discretization).
     double m;
@@ -625,13 +629,11 @@ void computeGPU_characteristic(Parameters& params,
     // but compute them all for safety..
     if (params.jumpType == VarianceGamma) {
         prepareVarianceGammaCharacteristic<<<max(N / MAX_BLOCK_SIZE, 1), min(N, MAX_BLOCK_SIZE)>>>(
-                d_characteristic,
-                N, delta_frequency,
+                d_characteristic, delta_frequency,
                 params.jumpMeanInverse(), params.VG_driftRate, params.volatility);
     } else if (params.jumpType == CGMY) {
         prepareCGMYCharacteristic<<<max(N / MAX_BLOCK_SIZE, 1), min(N, MAX_BLOCK_SIZE)>>>(
-                d_characteristic,
-                N, delta_frequency,
+                d_characteristic, delta_frequency,
                 params.CGMY_C, params.CGMY_G, params.CGMY_M, params.CGMY_Y,
                 tgamma(-params.CGMY_Y));
     } else {
@@ -640,12 +642,12 @@ void computeGPU_characteristic(Parameters& params,
 
             if (params.jumpType == Merton) {
                 prepareMertonJumpFT<<<max(N / MAX_BLOCK_SIZE, 1), min(N, MAX_BLOCK_SIZE)>>>(
-                        d_jump_ft, delta_frequency, N,
+                        d_jump_ft, delta_frequency,
                         params.mertonNormalStdev, params.mertonMean);
                 checkCuda(cudaPeekAtLastError());
             } else if (params.jumpType == Kou) {
                 prepareKouJumpFT<<<max(N / MAX_BLOCK_SIZE, 1), min(N, MAX_BLOCK_SIZE)>>>(
-                        d_jump_ft, delta_frequency, N,
+                        d_jump_ft, delta_frequency,
                         params.kouUpJumpProbability, params.kouUpRate, params.kouDownRate);
                 checkCuda(cudaPeekAtLastError());
             }
@@ -655,7 +657,7 @@ void computeGPU_characteristic(Parameters& params,
                 d_characteristic, d_jump_ft,
                 params.riskFreeRate, params.dividendRate,
                 params.volatility, params.jumpMean, params.kappa(),
-                delta_frequency, N);
+                delta_frequency);
     }
     checkCuda(cudaPeekAtLastError());
 }
