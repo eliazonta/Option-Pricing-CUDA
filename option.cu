@@ -579,9 +579,9 @@ void computeCPU(Parameters& params)
     int answer_index = params.answer_index();
 
     if (params.verbose) {
-        printf("Price at index %i: %f\n", answer_index, optionValues[answer_index]);
+        printf("Price at index %i: %.9g\n", answer_index, optionValues[answer_index]);
     } else {
-        printf("%f\n", optionValues[answer_index]);
+        printf("%.9g\n", optionValues[answer_index]);
     }
 }
 
@@ -744,9 +744,9 @@ void computeGPU(Parameters& params)
     int answer_index = params.answer_index();
 
     if (params.verbose) {
-        printf("Price at index %i: %f\n", answer_index, optionValues[answer_index]);
+        printf("Price at index %i: %.9g\n", answer_index, optionValues[answer_index]);
     } else {
-        printf("%f\n", optionValues[answer_index]);
+        printf("%.9g\n", optionValues[answer_index]);
     }
 }
 
