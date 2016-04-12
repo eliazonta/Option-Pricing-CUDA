@@ -1,1 +1,0 @@
-sudo apt-get install fftw3 fftw3-dev pkg-config
