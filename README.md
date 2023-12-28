@@ -1,4 +1,4 @@
-# About
+# Option Pricing with CUDA
 
 This program compute the price of European and American options in the GPU, under jump diffusion. It uses the fourier time-stepping method to doing so.
 
@@ -6,11 +6,14 @@ It is mainly an implementation of the theses of Lippa (2013) and Surkov (2009), 
 
 # Installation
 
-This program requires CUDA and FFTW (for the CPU version), as well as a NVidia graphics card that supports recent versions of CUDA.
+This program requires CUDA for the GPU implementation and FFTW for the CPU version.
 
-To download CUDA, see NVidia website.
+>as well as a Nvidia GPU that supports recent versions of CUDA.
 
-```
+To download CUDA Toolkit view the [website](https://developer.nvidia.com/cuda-toolkit).
+To [FFTW](https://www.fftw.org)
+
+```bash
 sudo apt-get install fftw3 fftw3-dev pkg-config
 ```
 
@@ -18,7 +21,7 @@ To build the program, simply use `make`. By default, this will compile the progr
 
 # Usage
 
-The program can be run using `./option` and `./option --cpu` for the CPU version. A number of command-line parameters can be used to precify the parameters of the option (e.g. strike price). For the full list, see the parsing code in `main()` and refer to the test file for examples.
+The program can be run using `./bin/option` and `./bin/option --cpu` for the CPU version. A number of command-line parameters can be used to precify the parameters of the option (e.g. strike price). For the full list, see the parsing code in `main()` and refer to the test file for examples.
 
 There are two test files: `test_diffusion.sh` and `test_pure.sh`. The former runs the option calculation code for European and American options with or without jump diffusion (Merton or Kou). The latter runs the option calculation for European and American options for pure jump models (Variance Gamma and CGMY).
 

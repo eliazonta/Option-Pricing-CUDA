@@ -5,38 +5,46 @@ else
 endif
 
 LD_FLAGS = $(LD_CUDA) -lcudart -lcufft -lfftw3 -lfftw3f
-OBJS = parameters.o utils.o fftwproxy.o
+OBJS = params.o utils.o fftwproxy.o
 
-all: option.o $(OBJS)
-	g++ -o option option.o $(OBJS) $(LD_FLAGS)
+# compilers and version
+CC := gcc
+CXX := g++
+NVCC := nvcc
+VERSION := -std=c++11
+
+# folders
+SRC := src
+OBJ := obj
+BIN := bin
+UTIL := utils
+
+all: $(OBJ)/option.o $(OBJ)/$(OBJS)
+	$(CXX) -o $(BIN)/option $(OBJ)/option.o $(OBJS) $(LD_FLAGS)
 
 # Compile the program to work in single-precision.
 # This is needed if the CUDA version is really old and doesn't
 # support double-precision.
-float: option_float.o $(OBJS)
-	g++ -o option option.o $(OBJS) $(LD_FLAGS)
+float: $(OBJ)/option_float.o $(OBJS)
+	$(CXX) -o $(BIN)/option $(OBJ)/option.o $(OBJS) $(LD_FLAGS)
 
-# Compile without an NVidia card using Ocelot
-intel: option_ocelot.o $(OBJS)
-	g++ -o option option_ocelot.o $(OBJS) `OcelotConfig -l` -lcufft
+$(OBJ)/utils.o: $(SRC)/$(UTIL)/utils.cu
+	$(NVCC) -g -c $(VERSION) $(SRC)/$(UTIL)/utils.cu
 
-utils.o: utils.cu
-	nvcc -g -c -std=c++11 utils.cu
+$(OBJS)/params.o: $(SRC)/$(UTIL)/params.cpp
+	$(CC) -g -c $(SRC)/$(UTIL)/params.cpp
 
-parameters.o: parameters.cpp
-	gcc -g -c parameters.cpp
+$(SRC)/fftwproxy.o: $(SRC)/fftwproxy.cpp
+	$(CC) -g -c $(SRC)/fftwproxy.cpp
 
-fftwproxy.o: fftwproxy.cpp
-	gcc -g -c fftwproxy.cpp
+$(OBJ)/option.o: $(SRC)/option.cu
+	$(NVCC) -g -c $(VERSION) $(SRC)/option.cu
 
-option.o: option.cu
-	nvcc -g -c -std=c++11 option.cu
+$(OBJ)/option_float.o: $(SRC)/option.cu
+	$(NVCC) -g -c $(VERSION) $(SRC)/option.cu -D USE_FLOAT
 
-option_float.o: option.cu
-	nvcc -g -c -std=c++11 option.cu -D USE_FLOAT
-
-option_ocelot.o: option.cu
-	nvcc -g -c -std=c++11 option.cu -arch=sm_20
+$(OBJ)/option_ocelot.o: $(SRC)/option.cu
+	$(NVCC) -g -c $(VERSION) $(SRC)/option.cu -arch=sm_20
 
 clean:
-	rm -rf *.o option
+	rm -rf  option bin obj *.o *.out *.err 

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "utils.h"
+#include "utils/utils.h"
 
 // Generic way of declaring a structure of two doubles.
 typedef float genfloat2[2];

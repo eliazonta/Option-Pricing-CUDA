@@ -5,7 +5,7 @@ echo "Reference price 16.212478"
 params="--payoff call --exercise european --S 90 --K 98 --T 0.25
         --r 0.06 --sigma 0
         --CGMY --C 16.97 --G 7.08 --M 29.97 --Y 0.6442"
-./option $1 $params --resolution 512
-./option $1 $params --resolution 1024
-./option $1 $params --resolution 2048
-./option $1 $params --resolution 4096
+./bin/option $1 $params --resolution 512
+./bin/option $1 $params --resolution 1024
+./bin/option $1 $params --resolution 2048
+./bin/option $1 $params --resolution 4096
